@@ -1,46 +1,47 @@
-// Genfileicons writes internal/fileicon/data.go: the icons of kinds of
-// files that @pierre/trees, the file tree of codiff, draws, which files
-// they are for, and their colors, read from the package's build.
+// Genfileicons embeds Material Icon Theme's SVGs and file associations.
 //
-//	npm pack @pierre/trees && tar xzf pierre-trees-*.tgz
+//	npm pack material-icon-theme@5.40.0 && tar xzf material-icon-theme-5.40.0.tgz
 //	go run ./tools/genfileicons package
 package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"go/format"
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 )
 
-var (
-	symbolRe = regexp.MustCompile("(?s)const sym_\\w+ = `(<symbol id=\"file-tree-builtin-([\\w-]+)\"[^>]*>.*?</symbol>)`;")
-	entryRe  = regexp.MustCompile(`^\s*"?([^":]+)"?: "([\w-]+)",?$`)
-	// --trees-file-icon-color-go: var(--trees-file-icon-color, var(--trees-icon-cyan));
-	colorRe = regexp.MustCompile(`--trees-file-icon-color-([\w-]+): var\([^,]+, var\(--trees-icon-(\w+)\)\);`)
-	// --trees-icon-cyan: light-dark(#1ca1c7, #68cdf2);
-	paletteRe = regexp.MustCompile(`--trees-icon-(\w+): light-dark\((#[0-9a-fA-F]+), (#[0-9a-fA-F]+)\);`)
-)
+type associations struct {
+	File                string            `json:"file"`
+	Folder              string            `json:"folder"`
+	FolderExpanded      string            `json:"folderExpanded"`
+	FileNames           map[string]string `json:"fileNames"`
+	FileExtensions      map[string]string `json:"fileExtensions"`
+	FolderNames         map[string]string `json:"folderNames"`
+	FolderNamesExpanded map[string]string `json:"folderNamesExpanded"`
+}
 
-// table reads an object literal of the module, as const NAME = {…};.
-func table(src, name string) map[string]string {
-	start := strings.Index(src, "const "+name+" = {")
-	if start < 0 {
-		log.Fatalf("no %s", name)
+type manifest struct {
+	associations
+	Light           associations `json:"light"`
+	IconDefinitions map[string]struct {
+		IconPath string `json:"iconPath"`
+	} `json:"iconDefinitions"`
+}
+
+func readJSON(path string, target any) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatal(err)
 	}
-	end := strings.Index(src[start:], "\n};")
-	out := map[string]string{}
-	for _, line := range strings.Split(src[start:start+end], "\n")[1:] {
-		if m := entryRe.FindStringSubmatch(line); m != nil {
-			out[strings.ToLower(m[1])] = m[2]
-		}
+	if err := json.Unmarshal(data, target); err != nil {
+		log.Fatalf("%s: %v", path, err)
 	}
-	return out
 }
 
 func writeMap(b *bytes.Buffer, name, doc string, m map[string]string) {
@@ -58,59 +59,69 @@ func writeMap(b *bytes.Buffer, name, doc string, m map[string]string) {
 
 func main() {
 	if len(os.Args) != 2 {
-		log.Fatal("usage: genfileicons <the @pierre/trees package>")
+		log.Fatal("usage: genfileicons <the material-icon-theme package>")
 	}
 	dir := os.Args[1]
-	js, err := os.ReadFile(filepath.Join(dir, "dist", "builtInIcons.js"))
-	if err != nil {
-		log.Fatal(err)
+	var pkg struct{ Name, Version string }
+	readJSON(filepath.Join(dir, "package.json"), &pkg)
+	if pkg.Name != "material-icon-theme" {
+		log.Fatal("expected the material-icon-theme package")
 	}
-	css, err := os.ReadFile(filepath.Join(dir, "dist", "style.js"))
-	if err != nil {
-		log.Fatal(err)
-	}
-	src := string(js)
-	symbols := map[string]string{}
-	for _, m := range symbolRe.FindAllStringSubmatch(src, -1) {
-		svg := strings.Replace(m[1], "<symbol", `<svg xmlns="http://www.w3.org/2000/svg"`, 1)
-		svg = strings.Replace(svg, fmt.Sprintf(` id="file-tree-builtin-%s"`, m[2]), "", 1)
-		svg = strings.ReplaceAll(svg, "</symbol>", "</svg>")
-		symbols[m[2]] = svg
-	}
-	if symbols["default"] == "" {
-		log.Fatal("no default icon")
-	}
-	style := strings.ReplaceAll(string(css), `\n`, "\n")
-	palette := map[string][2]string{}
-	for _, m := range paletteRe.FindAllStringSubmatch(style, -1) {
-		palette[m[1]] = [2]string{m[2], m[3]}
-	}
-	light, dark := map[string]string{}, map[string]string{}
-	for _, m := range colorRe.FindAllStringSubmatch(style, -1) {
-		if c, ok := palette[m[2]]; ok {
-			light[m[1]], dark[m[1]] = c[0], c[1]
+	var m manifest
+	readJSON(filepath.Join(dir, "dist", "material-icons.json"), &m)
+	symbols, variants := map[string]string{}, map[string]string{}
+	add := func(token string) {
+		if _, ok := symbols[token]; ok {
+			return
 		}
+		def, ok := m.IconDefinitions[token]
+		if !ok {
+			log.Fatalf("missing icon definition %q", token)
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "dist", filepath.FromSlash(def.IconPath)))
+		if err != nil {
+			log.Fatal(err)
+		}
+		symbols[token] = strings.TrimSpace(string(data))
 	}
-	for token := range symbols {
-		// Icons without a color of their own are gray.
-		if light[token] == "" {
-			light[token], dark[token] = palette["gray"][0], palette["gray"][1]
+	for _, token := range []string{m.File, m.Folder, m.FolderExpanded} {
+		add(token)
+	}
+	for _, pair := range [][2]map[string]string{
+		{m.FileNames, m.Light.FileNames},
+		{m.FileExtensions, m.Light.FileExtensions},
+		{m.FolderNames, m.Light.FolderNames},
+		{m.FolderNamesExpanded, m.Light.FolderNamesExpanded},
+	} {
+		for key, token := range pair[0] {
+			add(token)
+			if light := pair[1][key]; light != "" && light != token {
+				if previous := variants[token]; previous != "" && previous != light {
+					log.Fatalf("conflicting light variants for %q", token)
+				}
+				add(light)
+				variants[token] = light
+			}
 		}
 	}
 
 	var b bytes.Buffer
-	b.WriteString(`// Code generated by tools/genfileicons from @pierre/trees; DO NOT EDIT.
-// The icons are © 2025 Pierre Computer Company, under the Apache License 2.0
-// in LICENSE.
+	fmt.Fprintf(&b, `// Code generated by tools/genfileicons from material-icon-theme %s; DO NOT EDIT.
+// https://github.com/material-extensions/vscode-material-icon-theme
+// Copyright (c) 2025 Material Extensions. MIT license in LICENSE.
 
 package fileicon
-`)
-	writeMap(&b, "symbols", "symbols are the icons' SVGs, by token.", symbols)
-	writeMap(&b, "byName", "byName are the tokens of files by their whole name, in lower case.", table(src, "BUILT_IN_FILE_NAME_TOKENS"))
-	writeMap(&b, "byExtension", "byExtension are the tokens of files by their extension, in lower case.", table(src, "BUILT_IN_FILE_EXTENSION_TOKENS"))
-	writeMap(&b, "overrides", "overrides are the extensions whose icons are more specific than the language's.", table(src, "COMPLETE_EXTENSION_OVERRIDES"))
-	writeMap(&b, "lightColors", "lightColors are the icons' colors in the light.", light)
-	writeMap(&b, "darkColors", "darkColors are the icons' colors in the dark.", dark)
+
+const defaultFile = %q
+const defaultFolder = %q
+const defaultFolderExpanded = %q
+`, pkg.Version, m.File, m.Folder, m.FolderExpanded)
+	writeMap(&b, "symbols", "symbols are the original, full-color SVGs, by icon name.", symbols)
+	writeMap(&b, "lightVariants", "lightVariants are the icon names to use in light mode.", variants)
+	writeMap(&b, "byName", "byName associates file names and path suffixes with icons.", m.FileNames)
+	writeMap(&b, "byExtension", "byExtension associates file extensions with icons, including compound extensions.", m.FileExtensions)
+	writeMap(&b, "folderNames", "folderNames associates folder names with their closed icons.", m.FolderNames)
+	writeMap(&b, "folderNamesExpanded", "folderNamesExpanded associates folder names with their open icons.", m.FolderNamesExpanded)
 	out, err := format.Source(b.Bytes())
 	if err != nil {
 		log.Fatal(err)
@@ -118,8 +129,17 @@ package fileicon
 	if err := os.WriteFile("internal/fileicon/data.go", out, 0o644); err != nil {
 		log.Fatal(err)
 	}
-	if lic, err := os.ReadFile(filepath.Join(dir, "LICENSE.md")); err == nil {
-		os.WriteFile("internal/fileicon/LICENSE", lic, 0o644)
+	license, err := os.ReadFile(filepath.Join(dir, "LICENSE"))
+	if err != nil {
+		log.Fatal(err)
 	}
-	log.Printf("%d icons", len(symbols))
+	if err := os.MkdirAll("resources/licenses", 0o755); err != nil {
+		log.Fatal(err)
+	}
+	for _, path := range []string{"internal/fileicon/LICENSE", "resources/licenses/material-icon-theme.txt"} {
+		if err := os.WriteFile(path, license, 0o644); err != nil {
+			log.Fatal(err)
+		}
+	}
+	log.Printf("Material Icon Theme %s: %d icons", pkg.Version, len(symbols))
 }

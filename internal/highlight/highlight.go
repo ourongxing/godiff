@@ -1,5 +1,4 @@
-// Package highlight colors source code by its tokens, with Chroma's lexers
-// and the palettes of codiff's Licht and Dunkel themes.
+// Package highlight classifies source code tokens with Chroma's lexers.
 package highlight
 
 import (

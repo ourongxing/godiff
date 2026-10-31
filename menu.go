@@ -126,7 +126,7 @@ func buildMenu() *mygo.Menu {
 			{Label: "Theme", Submenu: []*mygo.MenuItem{
 				{ID: "theme-system", Label: "Match System", Type: mygo.MenuItemRadio, Checked: s.Theme == "system", Click: setTheme("system")},
 				{ID: "theme-light", Label: "Light", Type: mygo.MenuItemRadio, Checked: s.Theme == "light", Click: setTheme("light")},
-				{ID: "theme-dark", Label: "Dark", Type: mygo.MenuItemRadio, Checked: s.Theme == "dark", Click: setTheme("dark")},
+				{ID: "theme-dark", Label: "Dark Modern", Type: mygo.MenuItemRadio, Checked: s.Theme == "dark", Click: setTheme("dark")},
 			}},
 			mygo.Separator(),
 			{Label: "Refresh Changes", Accelerator: "CmdOrCtrl+R", Click: inWindow(func(w *window) { w.refresh() })},

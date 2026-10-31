@@ -25,6 +25,7 @@ func (w *window) view(c *ui.Context) {
 			}
 		}()
 	}
+	applyReviewTheme(c)
 	t := c.Theme()
 	pal := paletteFor(t)
 	w.now = c.Now()
@@ -32,9 +33,7 @@ func (w *window) view(c *ui.Context) {
 		w.regroupPending = false
 		w.regroup()
 	}
-	// On macOS, the window shows the sidebar's material where nothing is
-	// drawn. Elsewhere it would show black, as under the translucent edge
-	// of the sidebar, so the sidebar's color is drawn there instead.
+	// Fill the window behind the sidebar and its translucent edge.
 	c.Root().Background(w.sidebarBg(t))
 
 	reviewBuilt := false
@@ -416,6 +415,7 @@ type welcome struct {
 }
 
 func (v *welcome) view(c *ui.Context) {
+	applyReviewTheme(c)
 	t := c.Theme()
 	pal := paletteFor(t)
 	c.Root().Background(pal.appBg)

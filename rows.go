@@ -41,17 +41,20 @@ type fileState struct {
 	kind *fileicon.Icon
 }
 
-// fileIcon draws the icon of a file's kind in its color, as codiff's
-// file tree does; a folder for an untracked directory.
+// fileIcon draws a file's Material Icon Theme artwork in its original colors.
 func fileIcon(c *ui.Context, f *fileState, size float32) ui.Element {
 	t := c.Theme()
 	if f.Directory {
-		return ui.Icon(c, iconFolder).FontSize(size).TextColor(t.TextMuted).Shrink(0)
+		return folderIcon(c, f.Path, false, size)
 	}
 	if f.kind == nil {
 		f.kind = fileicon.For(f.Path)
 	}
-	return ui.Icon(c, f.kind.SVG).FontSize(size).TextColor(f.kind.Color(t.Dark)).Shrink(0)
+	return ui.Image(c, f.kind.SVG(t.Dark)).Size(size, size).Shrink(0)
+}
+
+func folderIcon(c *ui.Context, path string, expanded bool, size float32) ui.Element {
+	return ui.Image(c, fileicon.ForFolder(path, expanded).SVG(c.Theme().Dark)).Size(size, size).Shrink(0)
 }
 
 // spanKey identifies the code of a line on one side, in the light or the

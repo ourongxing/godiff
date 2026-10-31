@@ -13,10 +13,10 @@ dark mode, menus and vibrancy.
 
 - **Review local changes**: staged, unstaged and untracked files against
   `HEAD`, in one scrolling surface of file cards with sticky headers.
-- **Split and unified diffs** with syntax highlighting (codiff's Licht and
-  Dunkel palettes), word-level change highlighting, and unchanged lines that
-  expand 100 at a time or all at once. New and deleted files show in one
-  column.
+- **Split and unified diffs** with syntax highlighting (Licht in light mode
+  and VS Code's Dark Modern in dark mode), word-level change highlighting,
+  and unchanged lines that expand 100 at a time or all at once. New and
+  deleted files show in one column.
 - **Viewed files**: marking a file viewed collapses it, and it opens again
   once it changes. Generated files (lockfiles, `*.min.js`,
   `linguist-generated`, …) and dependency folders start collapsed.
@@ -54,8 +54,8 @@ dark mode, menus and vibrancy.
 - Sidebar navigation selects files, directories, commits and pull requests
   on pointer press, showing the new selection as the sidebar takes focus.
   Directory disclosure and button actions activate on release.
-- **File icons** of each kind of file, in its color, as codiff's file tree
-  draws them: the icons of [@pierre/trees](https://www.npmjs.com/package/@pierre/trees).
+- **File and folder icons** from [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme),
+  with original colors, light-mode variants and specialized file-name associations.
 
 ## Usage
 
@@ -136,7 +136,7 @@ go tool mygo dev          # the app, rebuilt as you edit
 go test ./...             # including the views, run without a window
 go tool mygo build        # Godiff.app and a disk image in build/
 go run ./tools/genicon    # render resources/icon.svg to the app icon
-go run ./tools/genfileicons <@pierre/trees package>  # update the file icons
+go run ./tools/genfileicons <material-icon-theme package>  # update the file icons
 ```
 
 `GODIFF_SNAPSHOTS=<dir> go test .` saves PNGs of the views the tests drive, and

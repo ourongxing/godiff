@@ -298,14 +298,14 @@ func (w *window) sidebar(c *ui.Context) {
 	})
 }
 
-// sidebarBg is the sidebar's background: none on macOS, where the
-// window's material shows through, else the theme's surface.
+// sidebarBg uses Dark Modern's solid sidebar in dark mode. Light mode
+// keeps the window's material on macOS.
 func (w *window) sidebarBg(t *ui.Theme) ui.Color {
+	if t.Dark {
+		return ui.Hex("#181818")
+	}
 	if runtime.GOOS == "darwin" && w.win != nil {
 		return ui.Transparent
-	}
-	if t.Dark {
-		return ui.Hex("#262628")
 	}
 	return ui.Hex("#ebebed")
 }
@@ -512,16 +512,13 @@ func (w *window) fileTree(c *ui.Context) {
 					ui.Textf(c, "%d", w.treeCount(key)).Font(w.codeFont()).FontSize(10).FontWeight(600).TextColor(muted).Shrink(0)
 					return
 				}
-				ui.Icon(c, iconFolder).FontSize(14).TextColor(muted)
+				folderIcon(c, n.name, !w.closedDirs[key], 14)
 				ui.Text(c, n.name).FontSize(13).SingleLine().Grow(1).Shrink(1).MinWidth(0)
 				return
 			}
 			f := w.files[n.file]
 			viewed := w.isViewed(f)
-			icon := fileIcon(c, f, 14)
-			if selected && focused {
-				icon.TextColor(muted)
-			}
+			fileIcon(c, f, 14)
 			name := ui.Text(c, n.name).FontSize(13).SingleLine().Grow(1).Shrink(1).MinWidth(0)
 			if viewed && !(selected && focused) {
 				name.TextColor(t.TextMuted)

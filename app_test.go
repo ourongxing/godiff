@@ -530,17 +530,20 @@ func TestBranchCompare(t *testing.T) {
 
 func TestFileIcons(t *testing.T) {
 	dir := testRepo(t)
-	for _, p := range []string{"web/App.tsx", "web/api.ts", "web/site.css", "package.json", "Dockerfile", ".gitignore", "README.md", "ci.yml", "lib.rs", "tool.py"} {
+	for _, p := range []string{"web/App.tsx", "web/api.ts", "web/site.css", "package.json", "bun.lock", "next.config.ts", "Dockerfile", ".gitignore", "README.md", "ci.yml", "lib.rs", "tool.py"} {
 		writeFile(t, dir, p, "x\n")
 	}
 	w, tt := newTestWindow(t, dir)
 	tt.SetDark(true)
 	tt.Frame()
 	snapshot(t, tt, "file-icons")
-	want := map[string]string{"web/App.tsx": "react", "web/api.ts": "typescript", "Dockerfile": "docker", ".gitignore": "git", "main.go": "go", "docs/long.txt": "text"}
+	want := map[string]string{"web/App.tsx": "react_ts", "web/api.ts": "typescript", "Dockerfile": "docker", ".gitignore": "git", "main.go": "go", "docs/long.txt": "document", "bun.lock": "bun", "next.config.ts": "next"}
 	for _, f := range w.files {
 		if token, ok := want[f.Path]; ok && (f.kind == nil || f.kind.Token != token) {
 			t.Errorf("%s: icon %+v, want %s", f.Path, f.kind, token)
 		}
 	}
+	tt.SetDark(false)
+	tt.Frame()
+	snapshot(t, tt, "file-icons-light")
 }

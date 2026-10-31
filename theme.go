@@ -5,8 +5,8 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// palette is the colors of the review, in the light or the dark: those
-// of codiff and of the diff renderer it uses.
+// palette is the colors of the review: Licht in light mode and VS Code's
+// Dark Modern in dark mode.
 type palette struct {
 	appBg      ui.Color // behind the cards
 	code       ui.Color // the code's own color
@@ -69,38 +69,39 @@ var (
 		muted:      ui.RGBA(17, 17, 17, 0.48),
 	}
 	darkPalette = palette{
-		appBg:      ui.Hex("#141414"),
-		code:       ui.Hex("#c8c8c8"),
-		lineNumber: ui.Hex("#6c6c6c"),
-		codeBg:     ui.Hex("#1c1c1c"),
-		addBg:      ui.Hex("#22382a"),
-		addGutter:  ui.Hex("#2a4632"),
-		addWord:    ui.RGBA(94, 204, 113, 0.22),
-		addBar:     ui.Hex("#5ecc71"),
-		addText:    ui.RGB(111, 208, 148),
-		delBg:      ui.Hex("#40262a"),
-		delGutter:  ui.Hex("#52302f"),
-		delWord:    ui.RGBA(255, 103, 98, 0.24),
-		delBar:     ui.Hex("#ff6762"),
-		delText:    ui.RGB(238, 126, 126),
-		emptySide:  ui.Hex("#202020"),
-		gapBg:      ui.Hex("#262626"),
-		gapText:    ui.Hex("#8a8a8a"),
-		cardBorder: ui.RGBA(230, 230, 230, 0.10),
-		headerBg:   ui.Hex("#232323"),
-		pill:       ui.RGBA(127, 127, 127, 0.16),
-		hover:      ui.RGBA(127, 127, 127, 0.16),
-		match:      ui.RGBA(255, 216, 92, 0.38),
-		matchNow:   ui.RGBA(255, 176, 46, 0.80),
-		selected:   ui.RGBA(90, 150, 255, 0.12),
-		viewed:     ui.RGB(111, 208, 148),
-		ref:        ui.Hex("#eb9a3d"),
-		muted:      ui.RGBA(230, 230, 230, 0.48),
+		appBg:      ui.Hex("#1f1f1f"),
+		code:       ui.Hex("#cccccc"),
+		lineNumber: ui.Hex("#6e7681"),
+		codeBg:     ui.Hex("#1f1f1f"),
+		addBg:      ui.RGBA(155, 185, 85, 0.20).Over(ui.Hex("#1f1f1f")),
+		addGutter:  ui.RGBA(155, 185, 85, 0.20).Over(ui.Hex("#1f1f1f")),
+		addWord:    ui.RGBA(156, 204, 44, 0.20),
+		addBar:     ui.Hex("#2ea043"),
+		addText:    ui.Hex("#73c991"),
+		delBg:      ui.RGBA(255, 0, 0, 0.20).Over(ui.Hex("#1f1f1f")),
+		delGutter:  ui.RGBA(255, 0, 0, 0.20).Over(ui.Hex("#1f1f1f")),
+		delWord:    ui.RGBA(255, 0, 0, 0.20),
+		delBar:     ui.Hex("#f85149"),
+		delText:    ui.Hex("#f85149"),
+		emptySide:  ui.Hex("#181818"),
+		gapBg:      ui.Hex("#181818"),
+		gapText:    ui.Hex("#9d9d9d"),
+		cardBorder: ui.Hex("#2b2b2b"),
+		headerBg:   ui.Hex("#181818"),
+		pill:       ui.Hex("#313131"),
+		hover:      ui.Hex("#2b2b2b"),
+		match:      ui.RGBA(187, 128, 9, 0.40),
+		matchNow:   ui.Hex("#9e6a03"),
+		selected:   ui.RGBA(38, 79, 120, 0.50),
+		viewed:     ui.Hex("#73c991"),
+		ref:        ui.Hex("#4daafc"),
+		muted:      ui.Hex("#9d9d9d"),
 	}
 )
 
 func init() {
-	// Licht and Dunkel, codiff's themes.
+	// Licht is codiff's light theme. Dark Modern inherits Dark+'s tokens:
+	// https://github.com/microsoft/vscode/tree/main/extensions/theme-defaults/themes
 	light := map[highlight.Class]string{
 		highlight.Comment: "#919191", highlight.Preproc: "#adadad", highlight.Keyword: "#352de3",
 		highlight.Type: "#c56e0e", highlight.LangConst: "#626fc9", highlight.Function: "#284181",
@@ -110,12 +111,12 @@ func init() {
 		highlight.Heading: "#111111", highlight.Inserted: "#1a7f37", highlight.Deleted: "#c4232e",
 	}
 	dark := map[highlight.Class]string{
-		highlight.Comment: "#919191", highlight.Preproc: "#adadad", highlight.Keyword: "#6a93cf",
-		highlight.Type: "#eb9a3d", highlight.LangConst: "#7b8cfd", highlight.Function: "#7b8cfd",
-		highlight.ClassName: "#f06efb", highlight.Exception: "#f93232", highlight.Number: "#db584d",
-		highlight.String: "#52ce81", highlight.Escape: "#52ce81", highlight.Regexp: "#699d36",
-		highlight.Tag: "#6a93cf", highlight.Attribute: "#6a93cf", highlight.Property: "#c8c8c8",
-		highlight.Heading: "#e8e8e8", highlight.Inserted: "#56d364", highlight.Deleted: "#ff7b72",
+		highlight.Comment: "#6a9955", highlight.Preproc: "#569cd6", highlight.Keyword: "#569cd6",
+		highlight.Type: "#4ec9b0", highlight.LangConst: "#569cd6", highlight.Function: "#dcdcaa",
+		highlight.ClassName: "#4ec9b0", highlight.Exception: "#4ec9b0", highlight.Number: "#b5cea8",
+		highlight.String: "#ce9178", highlight.Escape: "#d7ba7d", highlight.Regexp: "#d16969",
+		highlight.Tag: "#569cd6", highlight.Attribute: "#9cdcfe", highlight.Property: "#9cdcfe",
+		highlight.Heading: "#569cd6", highlight.Inserted: "#b5cea8", highlight.Deleted: "#ce9178",
 	}
 	lightPalette.syntax[highlight.Plain] = lightPalette.code
 	darkPalette.syntax[highlight.Plain] = darkPalette.code
@@ -125,6 +126,35 @@ func init() {
 	for k, v := range dark {
 		darkPalette.syntax[k] = ui.Hex(v)
 	}
+}
+
+// applyReviewTheme gives controls the same Dark Modern colors as the diff,
+// retaining the system's font and metrics from the frame's theme.
+func applyReviewTheme(c *ui.Context) {
+	if !c.Theme().Dark {
+		return
+	}
+	t := *c.Theme()
+	t.Background = darkPalette.appBg
+	t.Surface = ui.Hex("#313131")
+	t.SurfaceHover = ui.Hex("#3c3c3c")
+	t.SurfacePressed = ui.Hex("#2b2b2b")
+	t.Border = ui.Hex("#3c3c3c")
+	t.Text = darkPalette.code
+	t.TextMuted = darkPalette.muted
+	t.Accent = ui.Hex("#0078d4")
+	t.AccentHover = ui.Hex("#026ec1")
+	t.AccentPressed = ui.Hex("#005a9e")
+	t.AccentText = ui.Hex("#ffffff")
+	t.Danger = ui.Hex("#f85149")
+	t.Warning = ui.Hex("#cca700")
+	t.Success = darkPalette.addText
+	t.Selection = ui.Hex("#264f78")
+	t.Focus = t.Accent
+	t.Inverse = ui.Hex("#202020")
+	t.InverseText = t.Text
+	t.Scrollbar = ui.RGBA(121, 121, 121, 0.40)
+	c.SetTheme(&t)
 }
 
 func paletteFor(t *ui.Theme) *palette {
