@@ -199,6 +199,9 @@ func statusColor(s diff.Status, pal *palette, t *ui.Theme) ui.Color {
 }
 
 func statusLetter(f *fileState) string {
+	if f.Submodule && f.Status != diff.Conflict {
+		return "S"
+	}
 	switch f.Status {
 	case diff.Untracked:
 		return "U"
@@ -206,6 +209,23 @@ func statusLetter(f *fileState) string {
 		return "!"
 	}
 	return string(f.Status)
+}
+
+// styleSidebarRow keeps repository and file selections consistent. It returns
+// the secondary text color for icons, counts and other details in the row.
+func styleSidebarRow(row ui.Element, t *ui.Theme, selected, focused bool) ui.Color {
+	text, muted := t.Text, t.TextMuted
+	switch {
+	case selected && focused:
+		row.Background(t.Accent)
+		text, muted = t.AccentText, t.AccentText.Alpha(0.8)
+	case selected:
+		row.Background(ui.RGBA(127, 127, 127, 0.2))
+	case row.Hovered():
+		row.Background(ui.RGBA(127, 127, 127, 0.08))
+	}
+	row.TextColor(text)
+	return muted
 }
 
 // compact writes a count briefly: 999, 1.2k, 15k, 1.2m.
@@ -279,6 +299,15 @@ func (w *window) sidebar(c *ui.Context) {
 					w.matchesFor = "\x00"
 					w.buildTree()
 					w.rowsDirty = true
+					if w.multipleRepositories() {
+						for _, entry := range w.workspace.entries {
+							if entry.view != nil && entry.view != w {
+								entry.view.filter = w.filter
+								entry.view.buildTree()
+								entry.view.rowsDirty = true
+							}
+						}
+					}
 				}
 			case 1:
 				searchInput(c, &w.historyFilter, "Filter history", &w.filterFocus, &w.typing)
@@ -286,9 +315,16 @@ func (w *window) sidebar(c *ui.Context) {
 				searchInput(c, &w.pullsFilter, "Filter pull requests", &w.filterFocus, &w.typing)
 			}
 		})
+		if w.workspace != nil && w.workspace.err != "" {
+			ui.Text(c, "Unable to read subrepositories: "+w.workspace.err).FontSize(11).TextColor(t.Danger).Padding(4, 12).MaxLines(2)
+		}
 		switch w.tab {
 		case 0:
-			w.fileTree(c)
+			if w.multipleRepositories() {
+				w.repositoryPanels(c)
+			} else {
+				w.fileTree(c)
+			}
 		case 1:
 			w.historyView(c)
 		default:
@@ -444,8 +480,9 @@ func (w *window) fileTree(c *ui.Context) {
 		return
 	}
 	rows := w.visibleTree()
-	w.treeRows = rows
 	choose := func(key string) {
+		w.activateRepository()
+		w.tab = 0
 		w.treeSel = key
 		if n := w.treeItems[key]; n != nil && !n.dir {
 			w.commitOpen = false
@@ -468,16 +505,7 @@ func (w *window) fileTree(c *ui.Context) {
 		}
 		selected := key == w.treeSel
 		row := ui.Row(c).Height(28).Padding(0, 8, 0, 6+float32(rows[i].depth)*14).Gap(5).Radius(6).MinWidth(0)
-		textColor := t.Text
-		switch {
-		case selected && focused:
-			row.Background(t.Accent)
-			textColor = t.AccentText
-		case selected:
-			row.Background(ui.RGBA(127, 127, 127, 0.2))
-		case row.Hovered():
-			row.Background(ui.RGBA(127, 127, 127, 0.08))
-		}
+		muted := styleSidebarRow(row, t, selected, focused)
 		if row.Pressed() && (!selected || w.commitOpen) {
 			choose(key)
 		}
@@ -487,11 +515,7 @@ func (w *window) fileTree(c *ui.Context) {
 			}
 			choose(key)
 		}
-		muted := t.TextMuted
-		if selected && focused {
-			muted = t.AccentText.Alpha(0.8)
-		}
-		row.TextColor(textColor).Children(func() {
+		row.Children(func() {
 			arrow := ui.Box(c).Size(14, 14).Center().Shrink(0)
 			if n.dir {
 				arrow.Children(func() {
@@ -833,7 +857,7 @@ func (w *window) sidebarFooter(c *ui.Context, pal *palette) {
 			if w.commitOpen {
 				label = "Review"
 			}
-			b := ui.Button(c, "").Children(func() {
+			b := ui.Button(c, "").Tooltip(label + " in " + w.repo.Root).Children(func() {
 				ui.Icon(c, iconCommit).FontSize(14)
 				ui.Text(c, label).SingleLine()
 			})

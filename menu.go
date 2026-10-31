@@ -23,7 +23,7 @@ func focused(win *mygo.Window) *window {
 func inWindow(fn func(w *window)) func(*mygo.MenuItem, *mygo.Window) {
 	return func(_ *mygo.MenuItem, win *mygo.Window) {
 		if w := focused(win); w != nil {
-			w.win.Update(func() { fn(w) })
+			w.win.Update(func() { fn(w.activeRepository()) })
 		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 )
 
 func (w *window) view(c *ui.Context) {
+	w = w.activeRepository()
 	if debugFrames {
 		start := time.Now()
 		defer func() {
@@ -43,7 +44,7 @@ func (w *window) view(c *ui.Context) {
 			w.sidebar(c)
 			w.sidebarResizer(c, pal)
 		}
-		ui.Column(c).Grow(1).MinWidth(0).Background(pal.appBg).Children(func() {
+		ui.Column(c.Key(w.repo.Root)).Grow(1).MinWidth(0).Background(pal.appBg).Children(func() {
 			w.toolbar(c, pal)
 			reviewBuilt = w.mainArea(c, pal)
 		})

@@ -208,7 +208,7 @@ func (r *Repo) WorkingTree(opts Options) ([]*diff.File, error) {
 		return nil, err
 	}
 	files = append(files, untracked...)
-	r.markConflicts(files)
+	r.markWorkingTreeStatus(files)
 	r.markGenerated(files, "")
 	SortFiles(files)
 	return files, nil
@@ -267,6 +267,12 @@ func (r *Repo) untrackedFile(path string) *diff.File {
 	if err != nil {
 		return &diff.File{Path: path, OldPath: path, Status: diff.Untracked}
 	}
+	if fi.IsDir() {
+		_, gitErr := os.Lstat(filepath.Join(full, ".git"))
+		return &diff.File{Path: strings.TrimSuffix(path, "/"), OldPath: strings.TrimSuffix(path, "/"),
+			Status: diff.Untracked, Directory: true, Submodule: gitErr == nil,
+			Note: "Nested repository. Review its changes in its repository section.", Fingerprint: "repository:" + path}
+	}
 	if fi.Mode()&os.ModeSymlink != 0 {
 		target, _ := os.Readlink(full)
 		return diff.NewFileFromContent(path, []byte(target), diff.Untracked)
@@ -304,19 +310,54 @@ func (r *Repo) Untracked() ([]string, error) {
 	return paths, nil
 }
 
-// markConflicts marks the files with merge conflicts.
-func (r *Repo) markConflicts(files []*diff.File) {
-	out, err := r.Git("diff", "--name-only", "--diff-filter=U", "-z")
+// markWorkingTreeStatus identifies conflicts and gitlinks even when a dirty
+// submodule's synthetic patch contains no index/mode header.
+func (r *Repo) markWorkingTreeStatus(files []*diff.File) {
+	if len(files) == 0 {
+		return
+	}
+	out, err := r.Git("status", "--porcelain=v2", "-z", "--untracked-files=no")
 	if err != nil || len(out) == 0 {
 		return
 	}
-	conflicted := map[string]bool{}
-	for _, p := range bytes.Split(out, []byte{0}) {
-		conflicted[string(p)] = true
-	}
+	byPath := map[string]*diff.File{}
 	for _, f := range files {
-		if conflicted[f.Path] {
+		byPath[f.Path] = f
+	}
+	records := bytes.Split(out, []byte{0})
+	for i := 0; i < len(records); i++ {
+		record := string(records[i])
+		if len(record) < 2 {
+			continue
+		}
+		fields := 9
+		switch record[0] {
+		case '1':
+		case '2':
+			fields = 10
+			i++ // the original name of a rename
+		case 'u':
+			fields = 11
+		default:
+			continue
+		}
+		parts := strings.SplitN(record, " ", fields)
+		if len(parts) != fields {
+			continue
+		}
+		f := byPath[parts[fields-1]]
+		if f == nil {
+			continue
+		}
+		if record[0] == 'u' {
 			f.Status = diff.Conflict
+		}
+		modes := 3
+		if record[0] == 'u' {
+			modes = 4
+		}
+		for _, mode := range parts[3 : 3+modes] {
+			f.Submodule = f.Submodule || mode == "160000"
 		}
 	}
 }
@@ -481,6 +522,7 @@ func (r *Repo) Compare(base string, opts Options) ([]*diff.File, string, error) 
 		return nil, "", err
 	}
 	files = append(files, untracked...)
+	r.markWorkingTreeStatus(files)
 	r.markGenerated(files, "")
 	SortFiles(files)
 	return files, mb, nil

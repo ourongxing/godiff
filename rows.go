@@ -44,6 +44,9 @@ type fileState struct {
 // fileIcon draws a file's Material Icon Theme artwork in its original colors.
 func fileIcon(c *ui.Context, f *fileState, size float32) ui.Element {
 	t := c.Theme()
+	if f.Submodule {
+		return ui.Icon(c, iconRepository).FontSize(size).TextColor(t.TextMuted).Shrink(0)
+	}
 	if f.Directory {
 		return folderIcon(c, f.Path, false, size)
 	}

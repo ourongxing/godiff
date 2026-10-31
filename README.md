@@ -13,6 +13,10 @@ dark mode, menus and vibrancy.
 
 - **Review local changes**: staged, unstaged and untracked files against
   `HEAD`, in one scrolling surface of file cards with sticky headers.
+- **Subrepositories**: local submodules and nested Git repositories appear
+  as compact, collapsible sections in the file tree. Choose a repository
+  or one of its files to review its changes, history and comments; commit
+  drafts and file selections stay with their own repository.
 - **Split and unified diffs** with syntax highlighting (Licht in light mode
   and VS Code's Dark Modern in dark mode), word-level change highlighting,
   and unchanged lines that expand 100 at a time or all at once. New and
@@ -72,9 +76,10 @@ go run . [<commit> | <branch> | <pull request>] [<path>]
   repository's GitHub remote (`upstream`, else `origin`).
 - `godiff ../other-repo` opens another repository.
 
-Every repository opens in a window of its own. **Godiff → Install Command Line
-Tool…** installs a `godiff` command that opens the app on the repository it
-runs in. Started from Finder or the Dock, the app reopens the repository opened
+Opening a repository creates a window for it and its local subrepositories.
+**Godiff → Install Command Line Tool…** installs a `godiff` command that opens
+the app on the repository it runs in. Started from Finder or the Dock, the app
+reopens the repository opened
 last, and **File → Open Recent** lists the ten opened lately.
 
 ### Keyboard

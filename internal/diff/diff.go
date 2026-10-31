@@ -75,10 +75,11 @@ type Hunk struct {
 
 // File is a changed file.
 type File struct {
-	Path    string
-	OldPath string // the path before a rename or a copy, else Path
-	Status  Status
-	Binary  bool
+	Path      string
+	OldPath   string // the path before a rename or a copy, else Path
+	Status    Status
+	Binary    bool
+	Submodule bool // a gitlink: the parent records a commit, not the child's files
 	// Mode change, as "100644 → 100755", if any.
 	ModeChange string
 	Hunks      []Hunk
@@ -238,8 +239,12 @@ func Parse(patch []byte) []*File {
 			remOld, remNew = hunk.OldLines, hunk.NewLines
 		case strings.HasPrefix(line, "new file mode"):
 			cur.Status = Added
+			cur.Submodule = strings.HasSuffix(line, "160000")
 		case strings.HasPrefix(line, "deleted file mode"):
 			cur.Status = Deleted
+			cur.Submodule = strings.HasSuffix(line, "160000")
+		case strings.HasPrefix(line, "index "):
+			cur.Submodule = cur.Submodule || strings.HasSuffix(line, "160000")
 		case strings.HasPrefix(line, "old mode "):
 			cur.ModeChange = strings.TrimPrefix(line, "old mode ")
 		case strings.HasPrefix(line, "new mode "):

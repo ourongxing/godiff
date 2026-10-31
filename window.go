@@ -51,11 +51,12 @@ type session struct {
 
 // window is a window reviewing a repository.
 type window struct {
-	win      *mygo.Window
-	repo     *git.Repo
-	launch   source // what the window was opened on
-	source   source
-	settings Settings
+	win       *mygo.Window
+	repo      *git.Repo
+	workspace *repositoryWorkspace
+	launch    source // what the window was opened on
+	source    source
+	settings  Settings
 
 	branch     string
 	files      []*fileState
@@ -80,7 +81,6 @@ type window struct {
 	filterFocus  bool
 	treeList     ui.ListState
 	treeSel      string // the key of the row chosen
-	treeRows     []treeRow
 	closedDirs   map[string]bool
 	treeItems    map[string]*treeNode
 	treeRoots    []string
@@ -235,6 +235,7 @@ func openWindow(dir string, src source) error {
 	windowsMu.Unlock()
 
 	w := newWindow(repo, src)
+	w.initRepositories()
 	w.win = mygo.NewWindow(mygo.WindowOptions{
 		Title:          windowTitle(repo.Root, src),
 		Width:          1280,
@@ -252,13 +253,27 @@ func openWindow(dir string, src source) error {
 	windowsMu.Unlock()
 	stop := make(chan struct{})
 	w.win.OnClose(func(*mygo.CloseEvent) {
-		if w.settings.CopyCommentsOnClose && len(w.comments) > 0 {
-			mygo.Clipboard.WriteText(w.commentsMarkdown())
+		if comments := w.repositoryComments(); w.settings.CopyCommentsOnClose && comments != "" {
+			mygo.Clipboard.WriteText(comments)
 		}
 	})
-	offSettings := cfg.OnChange(func(s Settings) { w.win.Update(func() { w.applySettings(s) }) })
+	offSettings := cfg.OnChange(func(s Settings) {
+		w.win.Update(func() {
+			for _, entry := range w.workspace.entries {
+				if entry.view != nil {
+					entry.view.applySettings(s)
+				}
+			}
+		})
+	})
 	w.win.OnClosed(func() {
 		close(stop)
+		w.workspace.closed.Store(true)
+		for _, entry := range w.workspace.entries {
+			if entry.view != nil {
+				entry.view.genA.Add(1)
+			}
+		}
 		offSettings()
 		windowsMu.Lock()
 		for i, o := range windows {
@@ -269,11 +284,12 @@ func openWindow(dir string, src source) error {
 		}
 		windowsMu.Unlock()
 	})
-	w.win.OnFocus(func() { go w.checkChanges() })
+	w.win.OnFocus(func() { go w.checkRepositoryChanges() })
 	go noteRecent(repo.Root)
 	w.load()
 	w.loadHistory()
 	w.loadUser()
+	w.workspace.discover()
 	go w.watch(stop)
 	w.captureIfAsked()
 	return nil
@@ -594,7 +610,8 @@ func (w *window) load() {
 					l.apply()
 				}
 			}
-			if !w.loadedOnce && len(files) == 0 && src.kind != sourceCommit && src.kind != sourcePull {
+			if !w.loadedOnce && len(files) == 0 && src.kind != sourceCommit && src.kind != sourcePull &&
+				!w.multipleRepositories() && (w.workspace == nil || w.workspace.discovered) {
 				// Nothing to review: the history shows instead, and takes
 				// the keys in place of the review.
 				w.tab = 1
@@ -760,7 +777,7 @@ func (w *window) read(contents *git.Contents, f *diff.File, oldRev, newRev strin
 		}
 		return l
 	}
-	if f.Binary || f.Directory || f.TooLarge {
+	if f.Binary || f.Directory || f.TooLarge || f.Submodule {
 		return l
 	}
 	text := func(data []byte) []string {
@@ -967,7 +984,7 @@ func (w *window) watch(stop chan struct{}) {
 			return
 		case <-time.After(delay):
 		}
-		w.checkChanges()
+		w.checkRepositoryChanges()
 	}
 }
 
@@ -976,7 +993,7 @@ func (w *window) checkChanges() {
 	var src source
 	var sig string
 	var busy bool
-	mygo.RunOnMain(func() { src, sig, busy = w.source, w.signature, w.loading || w.changed })
+	mygo.RunOnMain(func() { src, sig, busy = w.source, w.signature, w.loading || w.changed || w.commitBusy })
 	if src.kind == sourcePull && !busy {
 		w.checkPull(src)
 		return
@@ -988,6 +1005,10 @@ func (w *window) checkChanges() {
 		w.win.Update(func() {
 			if w.source == src && !w.loading {
 				w.changed = true
+				if w.multipleRepositories() && src.kind == sourceWorkingTree && !w.commitBusy {
+					w.load()
+					w.loadHistory()
+				}
 			}
 		})
 	}
@@ -996,6 +1017,9 @@ func (w *window) checkChanges() {
 // refresh loads the source again, and the history, and the pull
 // requests once listed.
 func (w *window) refresh() {
+	if w.workspace != nil {
+		w.workspace.discover()
+	}
 	w.load()
 	w.loadHistory()
 	if w.pullsLoaded {
