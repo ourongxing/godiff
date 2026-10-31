@@ -527,7 +527,6 @@ func (w *window) load() {
 			err    error
 			wg     sync.WaitGroup
 		)
-		remoteURL := w.repo.WebURL()
 		if needBranch {
 			wg.Add(1)
 			go func() {
@@ -557,6 +556,7 @@ func (w *window) load() {
 			files, base = pulled.files, pulled.mergeBase
 		}
 		wg.Wait()
+		remoteURL := w.repo.WebURL(branch)
 		// The revisions of the old and the new side; "" is the work tree.
 		var oldRev, newRev string
 		switch src.kind {
