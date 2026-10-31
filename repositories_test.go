@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,16 +57,15 @@ func TestRepositorySwitchPreservesReviewsAndDrafts(t *testing.T) {
 	child.comments[0].text = "Child comment"
 	tt.Frame()
 	snapshot(t, tt, "repositories")
-	if err := tt.Click("Repository app"); err != nil {
+	hoverSidebarRow(t, tt, "Repository app")
+	if err := tt.Click("Review local changes in app"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
 	if root.activeRepository() != child || child.subject != "Child draft" || root.subject != "Parent draft" {
 		t.Fatal("switch mixed the repository state")
 	}
-	if err := tt.Click("Commit"); err != nil {
-		t.Fatal(err)
-	}
+	child.toggleCommit()
 	tt.Frame()
 	if !child.commitOpen || root.commitOpen || child.body != "Child summary" || root.body != "Parent summary" {
 		t.Fatal("commit draft belongs to the wrong repository")
@@ -98,11 +98,16 @@ func TestRepositoryCommitOnlyChangesChild(t *testing.T) {
 	root, child, tt := repositoryTestWindow(t)
 	parentHead, _ := root.repo.Resolve("HEAD")
 	child.subject = "Commit child only"
-	if err := tt.Click("Repository app"); err != nil {
+	hoverSidebarRow(t, tt, "Repository app")
+	if err := tt.Click("Review local changes in app"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if err := tt.Click("Commit"); err != nil {
+	child.paletteOpen = true
+	tt.Frame()
+	tt.Type("commit")
+	tt.Frame()
+	if err := tt.Click("Commit…"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -121,19 +126,28 @@ func TestRepositoryCommitOnlyChangesChild(t *testing.T) {
 
 func TestRepositoryCollapseAndRemoval(t *testing.T) {
 	root, child, tt := repositoryTestWindow(t)
-	if err := tt.Click("Toggle repository app"); err != nil {
+	if err := tt.Click("Repository app"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
 	if !root.workspace.entries[1].collapsed {
 		t.Fatal("repository did not collapse")
 	}
-	if err := tt.Click("Toggle repository app"); err != nil {
+	if root.activeRepository() != root {
+		t.Fatal("collapsing a repository selected it")
+	}
+	if err := tt.Click("Repository app"); err != nil {
 		t.Fatal(err)
 	}
 	if root.workspace.entries[1].collapsed {
 		t.Fatal("repository did not expand")
 	}
+	if root.activeRepository() != root {
+		t.Fatal("expanding a repository selected it")
+	}
+	tt.Move(500, 50)
+	tt.Frame()
+	snapshot(t, tt, "repository-group-expanded")
 	child.activateRepository()
 	// Removing a child worktree leaves a visible, uninitialized gitlink.
 	if err := os.Rename(child.repo.Root, child.repo.Root+"-moved"); err != nil {
@@ -161,6 +175,52 @@ func TestRepositoryCollapseAndRemoval(t *testing.T) {
 	}
 }
 
+func TestRepositoryHeaderActionsStayWithTheirRepository(t *testing.T) {
+	root, child, tt := repositoryTestWindow(t)
+	gitIn(t, child.repo.Root, "remote", "set-url", "origin", "https://gitlab.com/team/child.git")
+	gitIn(t, child.repo.Root, "switch", "-c", "feature/header-actions")
+	head, err := child.repo.Resolve("HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child.setSource(source{kind: sourceCommit, ref: head})
+	root.tab = 1
+	tt.Frame()
+	hoverSidebarRow(t, tt, "Repository app")
+	snapshot(t, tt, "repository-header-history-actions")
+	if err := tt.Click("Open remote repository for app"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(tt.OpenedURLs(), []string{"https://gitlab.com/team/child/-/tree/feature%2Fheader-actions"}) || root.activeRepository() != root {
+		t.Fatal("the header opened another repository or changed the selection")
+	}
+	gitIn(t, child.repo.Root, "commit", "-qam", "Update child")
+	parentGen, childGen := root.gen, child.gen
+	if err := tt.Click("Refresh repository app"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if child.gen != childGen+1 || root.gen != parentGen || root.activeRepository() != root || child.history[0].Subject != "Update child" || child.source.ref != head {
+		t.Fatal("the header refresh changed another repository or the selected review")
+	}
+	if err := tt.Click("Review local changes in app"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if root.activeRepository() != child || child.tab != 0 || child.source != (source{}) || root.source != (source{}) {
+		t.Fatal("the header did not open the child's local changes")
+	}
+	if err := tt.Click("Repository app"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	hoverSidebarRow(t, tt, "Repository app")
+	if _, ok := tt.Find("Refresh repository app"); !ok || !root.workspace.entries[1].collapsed {
+		t.Fatal("collapsing a repository hid its actions")
+	}
+	snapshot(t, tt, "repository-header-collapsed-actions")
+}
+
 func TestRepositoryHistorySwitch(t *testing.T) {
 	root, child, tt := repositoryTestWindow(t)
 	root.historyFilter = "Add submodule"
@@ -176,10 +236,10 @@ func TestRepositoryHistorySwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if root.activeRepository() != child || child.tab != 1 || !tt.HasText("Child baseline") || tt.HasText("Add submodule") {
-		t.Fatal("selecting the subrepository should show its own history")
+	if root.activeRepository() != root || !tt.HasText("Child baseline") || tt.HasText("Add submodule") {
+		t.Fatal("expanding the child's history selected a review or showed the wrong commits")
 	}
-	// Repository selection hands keyboard navigation to its history list.
+	// Expanding the group hands keyboard navigation to its history list.
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
 	if child.source.kind != sourceCommit || child.source.ref != child.history[0].Hash ||
@@ -225,7 +285,7 @@ func TestRepositoryHistoryCollapseAndPagination(t *testing.T) {
 		t.Fatal("the inactive repository loaded additional history")
 	}
 	name := filepath.Base(root.repo.Root)
-	if err := tt.Click("Toggle repository " + name); err != nil {
+	if err := tt.Click("Repository " + name); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -256,8 +316,8 @@ func TestRepositoryPullRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Frame()
-	if child.tab != 2 || !child.pullsLoaded || !tt.HasText("Greet louder") {
-		t.Fatal("the child pull request list did not load from its own remote")
+	if root.activeRepository() != root || !child.pullsLoaded || !tt.HasText("Greet louder") {
+		t.Fatal("expanding the child's pull requests selected a review or used another remote")
 	}
 	snapshot(t, tt, "repository-pulls")
 	tt.Key(0, ui.KeyDown)

@@ -96,6 +96,10 @@ func viewedKey(root string, src source) string {
 		return ""
 	case sourcePull:
 		return root + "#" + src.ref
+	case sourceWorkingTree:
+		if src.ref != "" {
+			return root + "#worktree:" + src.ref
+		}
 	}
 	return root
 }

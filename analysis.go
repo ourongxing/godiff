@@ -151,6 +151,11 @@ func (w *window) runAnalysis() {
 	switch src.kind {
 	case sourceWorkingTree:
 		req.Title, req.Checkout = "Uncommitted changes", true
+		if src.ref == "staged" {
+			req.Title, req.Checkout = "Staged changes", false
+		} else if src.ref == "unstaged" {
+			req.Title = "Unstaged changes"
+		}
 		if w.branch != "" {
 			req.Title += " on " + w.branch
 		}

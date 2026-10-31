@@ -128,7 +128,7 @@ func TestReview(t *testing.T) {
 			t.Errorf("%s not loaded", f.Path)
 		}
 	}
-	for _, want := range []string{"main.go", "new.go", "old.txt", "long.txt", "Total:"} {
+	for _, want := range []string{"main.go", "new.go", "old.txt", "long.txt"} {
 		if !tt.HasText(want) {
 			t.Errorf("no %q in %q", want, tt.Texts())
 		}
@@ -195,6 +195,9 @@ func TestComments(t *testing.T) {
 
 func TestReviewShortcutsFromSidebar(t *testing.T) {
 	w, tt := newTestWindow(t, testRepo(t))
+	// Keep text lookup on the tree before the diff's duplicate file names.
+	w.settings.SidebarPosition = "left"
+	tt.Frame()
 	if err := tt.Click("old.txt"); err != nil {
 		t.Fatal(err)
 	}
@@ -226,11 +229,11 @@ func TestReviewListReturnsAfterEmptyView(t *testing.T) {
 			w.focusList = true
 			tt.Frame()
 			tt.Frame()
-			if _, ok := tt.Find("Changes"); ok || !w.focusList {
+			if _, ok := tt.Find("Diff review"); ok || !w.focusList {
 				t.Fatal("the hidden review was built or took focus")
 			}
-			if _, ok := tt.Find("Changed files"); name == "filter" && ok {
-				t.Fatal("the empty file tree was built")
+			if name == "filter" && w.treeCount("s:staged")+w.treeCount("s:unstaged") != 0 {
+				t.Fatal("filtered files remained in the tree")
 			}
 			tt.Key(0, ui.KeyJ)
 			tt.Key(0, ui.KeyEnter)
@@ -242,7 +245,7 @@ func TestReviewListReturnsAfterEmptyView(t *testing.T) {
 			w.buildTree()
 			w.rowsDirty = true
 			tt.Frame()
-			if !tt.Focused("Changes") || w.focusList {
+			if !tt.Focused("Diff review") || w.focusList {
 				t.Fatal("the returning review did not take focus")
 			}
 			tt.Key(0, ui.KeyJ)
@@ -276,7 +279,11 @@ func TestFind(t *testing.T) {
 func TestCommit(t *testing.T) {
 	dir := testRepo(t)
 	w, tt := newTestWindow(t, dir)
-	if err := tt.Click("Commit"); err != nil {
+	w.paletteOpen = true
+	tt.Frame()
+	tt.Type("commit")
+	tt.Frame()
+	if err := tt.Click("Commit…"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Frame()
@@ -372,6 +379,9 @@ func TestPalette(t *testing.T) {
 
 func TestTree(t *testing.T) {
 	w, tt := newTestWindow(t, testRepo(t))
+	// Keep text lookup on the tree before the diff's duplicate file names.
+	w.settings.SidebarPosition = "left"
+	tt.Frame()
 	// Clicking a file in the tree scrolls the review to it.
 	box, ok := tt.Find("old.txt")
 	if !ok {
@@ -396,7 +406,7 @@ func TestTree(t *testing.T) {
 	w.treeSel = "d:docs"
 	tt.Key(0, ui.KeyLeft)
 	tt.Frame()
-	if !w.closedDirs["d:docs"] || len(w.visibleTree()) != 5 {
+	if !w.closedDirs["d:docs"] || len(w.visibleTree()) != 7 {
 		t.Errorf("docs not closed: %v", w.visibleTree())
 	}
 }
@@ -538,7 +548,11 @@ func TestFileIcons(t *testing.T) {
 	tt.Frame()
 	snapshot(t, tt, "file-icons")
 	want := map[string]string{"web/App.tsx": "react_ts", "web/api.ts": "typescript", "Dockerfile": "docker", ".gitignore": "git", "main.go": "go", "docs/long.txt": "document", "bun.lock": "bun", "next.config.ts": "next"}
-	for _, f := range w.files {
+	for _, n := range w.treeItems {
+		f := n.file
+		if f == nil {
+			continue
+		}
 		if token, ok := want[f.Path]; ok && (f.kind == nil || f.kind.Token != token) {
 			t.Errorf("%s: icon %+v, want %s", f.Path, f.kind, token)
 		}

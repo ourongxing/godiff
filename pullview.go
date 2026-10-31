@@ -74,6 +74,7 @@ func (w *window) pullsView(c *ui.Context) {
 		if i < 0 || i >= len(list) {
 			return
 		}
+		w.activateRepository()
 		w.commitOpen = false
 		w.pullsList.ScrollIntoView(i)
 		w.setSource(pullSource(w.gh.repo, list[i].Number))
@@ -85,17 +86,17 @@ func (w *window) pullsView(c *ui.Context) {
 		p := list[i]
 		row := ui.Row(c).Gap(8).Padding(6, 8).Radius(6).AlignItems(ui.Start).Role(ui.RoleButton).Label(p.Title)
 		muted, ref := t.TextMuted, pal.ref
-		selected := i == current && focused
+		selected := i == current && focused && w.activeRepository() == w
 		switch {
 		case selected:
 			row.Background(t.Accent).TextColor(t.AccentText)
 			muted, ref = t.AccentText.Alpha(0.75), t.AccentText
-		case i == current:
+		case i == current && w.activeRepository() == w:
 			row.Background(ui.RGBA(127, 127, 127, 0.2))
 		case row.Hovered():
 			row.Background(ui.RGBA(127, 127, 127, 0.08))
 		}
-		if (row.Pressed() || row.Clicked()) && i != current {
+		if (row.Pressed() || row.Clicked()) && (i != current || w.activeRepository() != w) {
 			open(i)
 		}
 		row.Tooltip(fmt.Sprintf("#%d %s\n%s wants to merge %s", p.Number, p.Title, p.Author.Login, p.HeadRef))

@@ -76,6 +76,12 @@ type window struct {
 	viewed    map[string]string
 	// loadStatus says what a slow load does, as fetching a pull request.
 	loadStatus string
+	// Both local change lists stay visible while either diff is reviewed.
+	staged, unstaged []*diff.File
+	changeBusy       bool
+	changeErr        string
+	discardChanges   []*diff.File
+	pendingFile      string
 
 	// The sidebar.
 	sidebarShown bool
@@ -455,6 +461,10 @@ func (w *window) splitFile(f *fileState) bool {
 // known of it, as the commit's message from the history; its changes come
 // as they load.
 func (w *window) setSource(src source) {
+	w.setSourceFile(src, "")
+}
+
+func (w *window) setSourceFile(src source, path string) {
 	if w.source == src {
 		return
 	}
@@ -469,6 +479,7 @@ func (w *window) setSource(src source) {
 	// history.
 	w.focusedOnce = true
 	w.switchTo(src)
+	w.pendingFile = path
 	if src.kind == sourceCommit {
 		for i := range w.history {
 			if w.history[i].Hash == src.ref {
@@ -483,6 +494,7 @@ func (w *window) setSource(src source) {
 // switchTo makes a source the one shown, its review in place of the
 // other's.
 func (w *window) switchTo(src source) {
+	w.pendingFile = ""
 	// Each source keeps its review: the comments, and what was viewed of a
 	// commit.
 	if w.sessions == nil {
@@ -554,12 +566,13 @@ func (w *window) load() {
 	}
 	w.background(func() {
 		var (
-			files  []*diff.File
-			commit = known
-			base   string
-			pulled pulledRequest
-			err    error
-			wg     sync.WaitGroup
+			files            []*diff.File
+			staged, unstaged []*diff.File
+			commit           = known
+			base             string
+			pulled           pulledRequest
+			err              error
+			wg               sync.WaitGroup
 		)
 		wg.Add(1)
 		go func() {
@@ -570,7 +583,20 @@ func (w *window) load() {
 		switch src.kind {
 		case sourceWorkingTree:
 			sig = w.repo.StatusSignature()
-			files, err = w.repo.WorkingTree(opts)
+			staged, err = w.repo.Staged(opts)
+			if err == nil {
+				unstaged, err = w.repo.Unstaged(opts)
+			}
+			if err == nil {
+				switch src.ref {
+				case "staged":
+					files = staged
+				case "unstaged":
+					files = unstaged
+				default:
+					files, err = w.repo.WorkingTree(opts)
+				}
+			}
 		case sourceCommit:
 			if commit == nil {
 				var c git.Commit
@@ -593,8 +619,13 @@ func (w *window) load() {
 		var oldRev, newRev string
 		switch src.kind {
 		case sourceWorkingTree:
-			if w.repo.HasHead() {
+			if src.ref == "unstaged" {
+				oldRev = ":"
+			} else if w.repo.HasHead() {
 				oldRev = "HEAD"
+			}
+			if src.ref == "staged" {
+				newRev = ":"
 			}
 		case sourceCommit:
 			if commit != nil && len(commit.Parents) > 0 {
@@ -638,14 +669,26 @@ func (w *window) load() {
 			if sig != "" {
 				w.signature = sig
 			}
+			if src.kind == sourceWorkingTree && err == nil {
+				w.staged, w.unstaged = staged, unstaged
+			}
 			w.setFiles(files)
+			if path := w.pendingFile; path != "" {
+				w.pendingFile = ""
+				for i, f := range w.files {
+					if f.Path == path {
+						w.revealFile(i)
+						break
+					}
+				}
+			}
 			for _, f := range w.files {
 				if l, ok := pre[f.Path]; ok && !f.loaded {
 					l.file = f
 					l.apply()
 				}
 			}
-			if !w.loadedOnce && len(files) == 0 && src.kind != sourceCommit && src.kind != sourcePull &&
+			if !w.loadedOnce && len(files) == 0 && len(staged)+len(unstaged) == 0 && src.kind != sourceCommit && src.kind != sourcePull &&
 				!w.multipleRepositories() && (w.workspace == nil || w.workspace.discovered) {
 				// Nothing to review: the history shows instead, and takes
 				// the keys in place of the review.
@@ -794,6 +837,9 @@ func (w *window) read(contents *git.Contents, f *diff.File, oldRev, newRev strin
 		if rev == "" {
 			data = w.repo.ReadWorkTree(path)
 		} else {
+			if rev == ":" {
+				rev = "" // cat-file's :path names the index entry.
+			}
 			data, _ = contents.Read(rev, path)
 		}
 		if len(data) > limit {
@@ -1040,7 +1086,7 @@ func (w *window) checkChanges() {
 		if len(w.history) > 0 {
 			head = w.history[0].Hash
 		}
-		busy, historyBusy = w.loading || w.changed || w.commitBusy, w.historyLoading
+		busy, historyBusy = w.loading || w.changed || w.commitBusy || w.changeBusy, w.historyLoading
 	})
 	if !historyBusy {
 		now, _ := w.repo.Resolve("HEAD")

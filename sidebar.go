@@ -19,9 +19,11 @@ import (
 type treeNode struct {
 	name     string
 	dir      bool
-	file     int    // the file's index in window.files
+	file     *fileState
 	path     string // a directory's
-	group    int    // a group's index, -1 for the others
+	group    *fileGroup
+	scope    string // staged or unstaged for local changes
+	section  bool
 	children []string
 }
 
@@ -100,17 +102,19 @@ func (w *window) fileNote(f *fileState) string {
 func (w *window) buildTree() {
 	type dirNode struct {
 		dirs  map[string]*dirNode
-		order []string // names of dirs and files, in the files' order
-		files map[string]int
+		order []string
+		files map[string]*fileState
 	}
-	newDir := func() *dirNode { return &dirNode{dirs: map[string]*dirNode{}, files: map[string]int{}} }
+	newDir := func() *dirNode { return &dirNode{dirs: map[string]*dirNode{}, files: map[string]*fileState{}} }
 	items := map[string]*treeNode{}
-	// tree builds the directories of some files, their keys made unique
-	// by prefix.
-	tree := func(files []int, prefix string) []string {
+	currentFiles := map[string]*fileState{}
+	currentIndex := map[string]int{}
+	for i, f := range w.files {
+		currentFiles[f.Path], currentIndex[f.Path] = f, i
+	}
+	tree := func(files []*fileState, prefix, scope string) []string {
 		root := newDir()
-		for _, i := range files {
-			f := w.files[i]
+		for _, f := range files {
 			parts := strings.Split(f.Path, "/")
 			d := root
 			for _, p := range parts[:len(parts)-1] {
@@ -123,25 +127,23 @@ func (w *window) buildTree() {
 				d = next
 			}
 			name := parts[len(parts)-1]
-			d.files[name] = i
+			d.files[name] = f
 			d.order = append(d.order, "f"+name)
 		}
-		var walk func(d *dirNode, path string) []string
+		var walk func(*dirNode, string) []string
 		walk = func(d *dirNode, path string) []string {
 			var keys []string
 			for _, o := range d.order {
 				name := o[1:]
 				if o[0] == 'f' {
-					i := d.files[name]
-					key := "f:" + w.files[i].Path
-					items[key] = &treeNode{name: name, file: i, group: -1}
+					f := d.files[name]
+					key := treeFileKey(scope, f.Path)
+					items[key] = &treeNode{name: name, file: f, scope: scope}
 					keys = append(keys, key)
 					continue
 				}
 				sub := d.dirs[name]
-				label := name
-				dir := path + name
-				// Directories holding one directory alone join it.
+				label, dir := name, path+name
 				for len(sub.order) == 1 && sub.order[0][0] == 'd' {
 					child := sub.order[0][1:]
 					label += "/" + child
@@ -149,38 +151,94 @@ func (w *window) buildTree() {
 					sub = sub.dirs[child]
 				}
 				key := "d:" + prefix + dir
-				items[key] = &treeNode{name: label, dir: true, file: -1, path: dir, group: -1, children: walk(sub, dir+"/")}
+				items[key] = &treeNode{name: label, dir: true, path: dir, scope: scope, children: walk(sub, dir+"/")}
 				keys = append(keys, key)
 			}
 			return keys
 		}
 		return walk(root, "")
 	}
-	byGroup := make([][]int, len(w.groups))
-	var ungrouped []int
-	for i, f := range w.files {
-		if !w.fileVisible(i) {
-			continue
+	grouped := func(files []*fileState, prefix, scope string) []string {
+		groups := w.groups
+		byKind := scope != "" && w.grouping() == groupKind
+		if byKind {
+			groups = make([]fileGroup, len(kinds))
+			for i, k := range kinds {
+				groups[i] = fileGroup{key: k.key, label: k.label, summary: k.summary}
+			}
 		}
-		if f.group >= 0 && f.group < len(w.groups) {
-			byGroup[f.group] = append(byGroup[f.group], i)
-		} else {
-			ungrouped = append(ungrouped, i)
+		byGroup := make([][]*fileState, len(groups))
+		var ungrouped []*fileState
+		for _, f := range files {
+			if !w.hasContent(f) || !fuzzyMatch(f.Path, strings.TrimSpace(w.filter)) {
+				continue
+			}
+			if w.finding && strings.TrimSpace(w.query) != "" {
+				i, ok := currentIndex[f.Path]
+				if !ok || !w.fileMatches[i] {
+					continue
+				}
+			}
+			gi := f.group
+			if byKind {
+				gi = kindOf(f.File)
+			}
+			if gi >= 0 && gi < len(groups) {
+				byGroup[gi] = append(byGroup[gi], f)
+			} else {
+				ungrouped = append(ungrouped, f)
+			}
 		}
+		var roots []string
+		for gi, files := range byGroup {
+			if len(files) == 0 {
+				continue
+			}
+			g := &groups[gi]
+			key := "g:" + prefix + g.key
+			items[key] = &treeNode{name: g.label, dir: true, group: g, scope: scope, children: tree(files, prefix+g.key+":", scope)}
+			roots = append(roots, key)
+		}
+		return append(roots, tree(ungrouped, prefix, scope)...)
 	}
 	var roots []string
-	for gi, files := range byGroup {
-		if len(files) == 0 {
-			continue
+	if w.source.kind == sourceWorkingTree {
+		for _, section := range []struct {
+			scope, name string
+			files       []*diff.File
+		}{
+			{"staged", "Staged changes", w.staged}, {"unstaged", "Changes", w.unstaged},
+		} {
+			var files []*fileState
+			for _, f := range section.files {
+				fs := &fileState{File: f, group: -1}
+				if current := currentFiles[f.Path]; current != nil {
+					fs.group = current.group
+					if w.source.ref == section.scope {
+						fs = current
+					}
+				}
+				files = append(files, fs)
+			}
+			prefix := ""
+			if section.scope == "staged" {
+				prefix = "staged:"
+			}
+			key := "s:" + section.scope
+			items[key] = &treeNode{name: section.name, dir: true, scope: section.scope, section: true, children: grouped(files, prefix, section.scope)}
+			roots = append(roots, key)
 		}
-		g := w.groups[gi]
-		key := "g:" + g.key
-		items[key] = &treeNode{name: g.label, dir: true, file: -1, group: gi, children: tree(files, g.key+":")}
-		roots = append(roots, key)
+	} else {
+		roots = grouped(w.files, "", "")
 	}
-	roots = append(roots, tree(ungrouped, "")...)
-	w.treeRoots = roots
-	w.treeItems = items
+	w.treeRoots, w.treeItems = roots, items
+}
+
+func treeFileKey(scope, path string) string {
+	if scope == "staged" {
+		return "f:staged:" + path
+	}
+	return "f:" + path
 }
 
 // statusColor is the color of a file's status letter.
@@ -211,7 +269,7 @@ func statusLetter(f *fileState) string {
 	return string(f.Status)
 }
 
-// styleSidebarRow keeps repository and file selections consistent. It returns
+// styleSidebarRow styles file selections and group hover states. It returns
 // the secondary text color for icons, counts and other details in the row.
 func styleSidebarRow(row ui.Element, t *ui.Theme, selected, focused bool) ui.Color {
 	text, muted := t.Text, t.TextMuted
@@ -226,6 +284,18 @@ func styleSidebarRow(row ui.Element, t *ui.Theme, selected, focused bool) ui.Col
 	}
 	row.TextColor(text)
 	return muted
+}
+
+// All tree disclosures share a slot and glyph, including repository headers.
+func sidebarChevron(c *ui.Context, collapsed bool, color ui.Color) {
+	ui.Box(c).Size(14, 14).Center().Shrink(0).Children(func() {
+		ic := ui.Icon(c, iconChevronDown).FontSize(12).TextColor(color)
+		target := float32(0)
+		if collapsed {
+			target = -90
+		}
+		ic.Rotate(ic.Animate("rot", target, 150*time.Millisecond))
+	})
 }
 
 // compact writes a count briefly: 999, 1.2k, 15k, 1.2m.
@@ -264,7 +334,6 @@ func countable(f *fileState) bool {
 
 func (w *window) sidebar(c *ui.Context) {
 	t := c.Theme()
-	pal := paletteFor(t)
 	bar := c.TitleBar()
 	sidebarRight := w.settings.SidebarPosition == "right"
 	left, right := max(bar.Left+6, 10), float32(10)
@@ -310,13 +379,16 @@ func (w *window) sidebar(c *ui.Context) {
 					}
 				}
 			case 1:
-				searchInput(c, &w.historyFilter, "Filter history", &w.filterFocus, &w.typing)
+				searchInput(c, &w.listRepository(1).historyFilter, "Filter history", &w.filterFocus, &w.typing)
 			default:
-				searchInput(c, &w.pullsFilter, "Filter pull requests", &w.filterFocus, &w.typing)
+				searchInput(c, &w.listRepository(2).pullsFilter, "Filter pull requests", &w.filterFocus, &w.typing)
 			}
 		})
 		if w.workspace != nil && w.workspace.err != "" {
 			ui.Text(c, "Unable to read subrepositories: "+w.workspace.err).FontSize(11).TextColor(t.Danger).Padding(4, 12).MaxLines(2)
+		}
+		if w.changeErr != "" && !w.multipleRepositories() {
+			ui.Text(c, w.changeErr).FontSize(11).TextColor(t.Danger).Padding(4, 12).MaxLines(3)
 		}
 		switch w.tab {
 		case 0:
@@ -334,7 +406,6 @@ func (w *window) sidebar(c *ui.Context) {
 				w.pullsView(c)
 			}
 		}
-		w.sidebarFooter(c, pal)
 	})
 }
 
@@ -383,7 +454,11 @@ func (w *window) sidebarToggle(c *ui.Context) {
 	if !w.sidebarShown {
 		tip = "Show sidebar (⌘⇧B)"
 	}
-	if iconButton(c, iconSidebar, tip).Clicked() {
+	glyph := iconSidebar
+	if w.settings.SidebarPosition == "right" {
+		glyph = iconSidebarRight
+	}
+	if iconButton(c, glyph, tip).Clicked() {
 		w.toggleSidebar()
 	}
 }
@@ -482,12 +557,20 @@ func (w *window) fileTree(c *ui.Context) {
 	}
 	rows := w.visibleTree()
 	choose := func(key string) {
+		if n := w.treeItems[key]; n != nil && n.section {
+			w.treeSel = key
+			return
+		}
 		w.activateRepository()
 		w.tab = 0
 		w.treeSel = key
 		if n := w.treeItems[key]; n != nil && !n.dir {
 			w.commitOpen = false
-			w.revealFile(n.file)
+			if n.scope != "" {
+				w.reviewChanges(n.scope, n.file.Path)
+			} else if i := slices.Index(w.files, n.file); i >= 0 {
+				w.revealFile(i)
+			}
 		}
 	}
 	w.treeList.Key = func(i int) any { return rows[i].key }
@@ -504,31 +587,38 @@ func (w *window) fileTree(c *ui.Context) {
 		if n == nil {
 			return
 		}
-		selected := key == w.treeSel
-		row := ui.Row(c).Height(28).Padding(0, 8, 0, 6+float32(rows[i].depth)*14).Gap(5).Radius(6).MinWidth(0)
+		selected := !n.section && key == w.treeSel
+		depth := rows[i].depth
+		if w.multipleRepositories() {
+			depth++
+		}
+		row := ui.Row(c).Height(28).Padding(0, 8, 0, 6+float32(depth)*14).Gap(5).Radius(6).MinWidth(0)
+		if n.file != nil && n.scope != "" {
+			label := "Changed file "
+			if n.scope == "staged" {
+				label = "Staged file "
+			}
+			row.Label(label + n.file.Path)
+		}
 		muted := styleSidebarRow(row, t, selected, focused)
-		if row.Pressed() && (!selected || w.commitOpen) {
+		if !n.section && row.Pressed() && (!selected || w.commitOpen) {
 			choose(key)
 		}
-		if row.Clicked() {
+		if !n.section && row.Clicked() {
 			if n.dir {
 				w.closedDirs[key] = !w.closedDirs[key]
 			}
 			choose(key)
 		}
 		row.Children(func() {
-			arrow := ui.Box(c).Size(14, 14).Center().Shrink(0)
+			if n.section {
+				w.changeSection(c, key, n, muted)
+				return
+			}
 			if n.dir {
-				arrow.Children(func() {
-					ic := ui.Icon(c, iconChevronDown).FontSize(12).TextColor(muted)
-					target := float32(0)
-					if w.closedDirs[key] {
-						target = -90
-					}
-					ic.Rotate(ic.Animate("rot", target, 150*time.Millisecond))
-				})
-				if n.group >= 0 && n.group < len(w.groups) {
-					g := &w.groups[n.group]
+				sidebarChevron(c, w.closedDirs[key], muted)
+				if n.group != nil {
+					g := n.group
 					icon := ui.Icon(c, groupIcon(g)).FontSize(14).TextColor(muted)
 					if g.critical && !(selected && focused) {
 						icon.TextColor(t.Danger)
@@ -541,14 +631,15 @@ func (w *window) fileTree(c *ui.Context) {
 				ui.Text(c, n.name).FontSize(13).SingleLine().Grow(1).Shrink(1).MinWidth(0)
 				return
 			}
-			f := w.files[n.file]
+			ui.Box(c).Size(14, 14).Shrink(0)
+			f := n.file
 			viewed := w.isViewed(f)
 			fileIcon(c, f, 14)
 			name := ui.Text(c, n.name).FontSize(13).SingleLine().Grow(1).Shrink(1).MinWidth(0)
 			if viewed && !(selected && focused) {
 				name.TextColor(t.TextMuted)
 			}
-			if notes := w.notes[f.Path]; len(notes) > 0 {
+			if notes := w.notes[f.Path]; len(notes) > 0 && (n.scope == "" || w.source.ref == "" || n.scope == w.source.ref) {
 				// The file has notes of the agent's review.
 				color := t.Accent
 				if slices.ContainsFunc(notes, func(n *aiNote) bool { return n.critical }) {
@@ -559,7 +650,7 @@ func (w *window) fileTree(c *ui.Context) {
 				}
 				ui.Icon(c, iconSparkle).FontSize(11).TextColor(color).Shrink(0).Tooltip(plural(len(notes), "AI note"))
 			}
-			if countable(f) && (f.Additions > 0 || f.Deletions > 0) {
+			if countable(f) && (f.Additions > 0 || f.Deletions > 0) && !(n.scope != "" && row.Hovered()) {
 				ui.Textf(c, "+%s -%s", compact(f.Additions), compact(f.Deletions)).
 					Font(w.codeFont()).FontSize(10).FontWeight(600).TextColor(muted).Shrink(0).
 					Tooltip(lines(f.Additions, "added") + ", " + lines(f.Deletions, "removed"))
@@ -575,6 +666,9 @@ func (w *window) fileTree(c *ui.Context) {
 			}
 			ui.Text(c, statusLetter(f)).Font(w.codeFont()).FontSize(11).FontWeight(700).TextColor(letter).
 				Width(12).TextAlign(ui.Center).Shrink(0).Tooltip(f.Status.Label())
+			if n.scope != "" && row.Hovered() {
+				w.changeFileActions(c, n)
+			}
 		})
 	}).Grow(1).Padding(2, 8).Gap(1).Focusable().FocusRing(false).Label("Changed files")
 
@@ -628,6 +722,57 @@ func (w *window) fileTree(c *ui.Context) {
 	}
 }
 
+func (w *window) changeSection(c *ui.Context, key string, n *treeNode, muted ui.Color) {
+	staged := n.scope == "staged"
+	files := w.unstaged
+	if staged {
+		files = w.staged
+	}
+	toggle := ui.ButtonBase(c).Height(28).Grow(1).MinWidth(0).Gap(5).FocusRing(false).Label(n.name)
+	toggle.OnClick(func() { w.closedDirs[key] = !w.closedDirs[key] })
+	toggle.Children(func() {
+		sidebarChevron(c, w.closedDirs[key], muted)
+		ui.Text(c, n.name).FontSize(12).FontWeight(600).SingleLine().Grow(1).Shrink(1).MinWidth(0)
+	})
+	busy := w.changeBusy || w.commitBusy || w.loading
+	if iconButton(c, iconFileDiff, "Review "+strings.ToLower(n.name)).Size(22, 22).Disabled(len(files) == 0 || busy).Clicked() {
+		w.reviewChanges(n.scope, "")
+	}
+	if !staged {
+		canDiscard := slices.ContainsFunc(files, git.CanDiscard)
+		if iconButton(c, iconUndo, "Discard all changes").Size(22, 22).Disabled(!canDiscard || busy).Clicked() {
+			w.askDiscard(files)
+		}
+	}
+	glyph, tip := iconPlus, "Stage all changes"
+	if staged {
+		glyph, tip = iconMinus, "Unstage all changes"
+	}
+	if iconButton(c, glyph, tip).Size(22, 22).Disabled(len(changePaths(files)) == 0 || busy).Clicked() {
+		w.changeIndex(staged, files)
+	}
+	ui.Textf(c, "%d", len(files)).Font(w.codeFont()).FontSize(10).TextColor(muted).Padding(1, 5).Radius(8).Background(paletteFor(c.Theme()).pill).Shrink(0)
+}
+
+func (w *window) changeFileActions(c *ui.Context, n *treeNode) {
+	f := n.file.File
+	files := []*diff.File{f}
+	busy := w.changeBusy || w.commitBusy || w.loading
+	if n.scope == "unstaged" && git.CanDiscard(f) {
+		if iconButton(c, iconUndo, "Discard changes to "+f.Path).Size(20, 22).Disabled(busy).Clicked() {
+			w.askDiscard(files)
+		}
+	}
+	glyph, tip := iconPlus, "Stage "+f.Path
+	staged := n.scope == "staged"
+	if staged {
+		glyph, tip = iconMinus, "Unstage "+f.Path
+	}
+	if iconButton(c, glyph, tip).Size(20, 22).Disabled(busy || len(changePaths(files)) == 0).Clicked() {
+		w.changeIndex(staged, files)
+	}
+}
+
 // treeCount counts the files under a row of the tree.
 func (w *window) treeCount(key string) int {
 	n := w.treeItems[key]
@@ -647,7 +792,17 @@ func (w *window) treeCount(key string) int {
 // selectTreeFile chooses a file's row in the tree, as the surface
 // scrolls to it.
 func (w *window) selectTreeFile(i int) {
-	key := "f:" + w.files[i].Path
+	scope := ""
+	if w.source.kind == sourceWorkingTree {
+		scope = w.source.ref
+		if scope == "" {
+			scope = "unstaged"
+			if w.treeItems[treeFileKey(scope, w.files[i].Path)] == nil {
+				scope = "staged"
+			}
+		}
+	}
+	key := treeFileKey(scope, w.files[i].Path)
 	if w.treeSel == key {
 		return
 	}
@@ -657,7 +812,14 @@ func (w *window) selectTreeFile(i int) {
 		if !n.dir || !w.closedDirs[k] {
 			continue
 		}
-		if (n.group >= 0 && n.group == w.files[i].group) || (n.path != "" && strings.HasPrefix(w.files[i].Path, n.path+"/")) {
+		if n.scope != scope {
+			continue
+		}
+		if n.section {
+			w.closedDirs[k] = false
+		}
+		sameGroup := n.group != nil && w.files[i].group >= 0 && w.files[i].group < len(w.groups) && n.group.key == w.groups[w.files[i].group].key
+		if sameGroup || (n.path != "" && strings.HasPrefix(w.files[i].Path, n.path+"/")) {
 			w.closedDirs[k] = false
 		}
 	}
@@ -699,6 +861,7 @@ func (w *window) historyView(c *ui.Context) {
 		if i < 0 || i >= len(entries) {
 			return
 		}
+		w.activateRepository()
 		w.commitOpen = false
 		w.historyList.ScrollIntoView(i)
 		if entries[i].local {
@@ -731,15 +894,15 @@ func (w *window) historyView(c *ui.Context) {
 		}
 		muted, ref := t.TextMuted, pal.ref
 		switch {
-		case i == current && focused:
+		case i == current && focused && w.activeRepository() == w:
 			row.Background(t.Accent).TextColor(t.AccentText)
 			muted, ref = t.AccentText.Alpha(0.75), t.AccentText
-		case i == current:
+		case i == current && w.activeRepository() == w:
 			row.Background(ui.RGBA(127, 127, 127, 0.2))
 		case row.Hovered():
 			row.Background(ui.RGBA(127, 127, 127, 0.08))
 		}
-		if (row.Pressed() || row.Clicked()) && i != current {
+		if (row.Pressed() || row.Clicked()) && (i != current || w.activeRepository() != w) {
 			if debugFrames {
 				log.Printf("history row %d clicked", i)
 			}
@@ -829,51 +992,14 @@ func relativeTime(now, t time.Time) string {
 	return fmt.Sprintf("%dy ago", int(d/(365*24*time.Hour)))
 }
 
-// sidebarFooter shows the total of the changes, and the Commit button.
-func (w *window) sidebarFooter(c *ui.Context, pal *palette) {
-	t := c.Theme()
-	adds, dels, counted := 0, 0, false
-	for i, f := range w.files {
-		if w.fileVisible(i) && countable(f) {
-			adds += f.Additions
-			dels += f.Deletions
-			counted = true
-		}
-	}
-	canCommit := w.tab == 0 && w.source.kind == sourceWorkingTree && len(w.files) > 0
-	if !(counted && w.tab == 0) && !canCommit {
-		return
-	}
-	ui.Row(c).MinHeight(40).Padding(6, 10).Gap(8).BorderWidth(1, 0, 0, 0).BorderColor(pal.cardBorder).Children(func() {
-		if counted && w.tab == 0 {
-			ui.Row(c).Gap(6).Tooltip("Total change: " + lines(adds, "added") + ", " + lines(dels, "removed")).Children(func() {
-				ui.Text(c, "Total:").FontSize(11).FontWeight(600).TextColor(t.TextMuted)
-				ui.Text(c, "+"+thousands(adds)).Font(w.codeFont()).FontSize(11).FontWeight(600).TextColor(pal.addText)
-				ui.Text(c, "-"+thousands(dels)).Font(w.codeFont()).FontSize(11).FontWeight(600).TextColor(pal.delText)
-			})
-		}
-		ui.Spacer(c)
-		if canCommit {
-			label := "Commit"
-			if w.commitOpen {
-				label = "Review"
-			}
-			b := ui.Button(c, "").Tooltip(label + " in " + w.repo.Root).Children(func() {
-				ui.Icon(c, iconCommit).FontSize(14)
-				ui.Text(c, label).SingleLine()
-			})
-			if b.Clicked() {
-				w.toggleCommit()
-			}
-		}
-	})
-}
-
 // sidebarResizer is the edge of the sidebar the user drags.
 func (w *window) sidebarResizer(c *ui.Context, pal *palette) {
 	ui.Box(c).Width(1).Shrink(0).Background(pal.cardBorder).Children(func() {
 		handle := ui.Box(c).Absolute().Top(0).Bottom(0).Left(-4).Width(9).Cursor(ui.CursorResizeEW)
 		if dx, _, held := handle.Dragged(); held {
+			if w.settings.SidebarPosition == "right" {
+				dx = -dx
+			}
 			w.dragWidth += dx
 			switch {
 			case w.dragWidth < sidebarCollapse:

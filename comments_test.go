@@ -46,7 +46,7 @@ func TestPlusOnUnchangedLines(t *testing.T) {
 		}
 		// The same line on the other side: the first, still empty, moves
 		// there.
-		changes, ok := tt.Find("Changes")
+		changes, ok := tt.Find("Diff review")
 		if !ok {
 			t.Fatal("no changes list")
 		}
@@ -94,7 +94,7 @@ func TestSwitchSourceOnFilesTab(t *testing.T) {
 	if w.source.kind != sourceCommit || tt.HasText("new.go") || !tt.HasText("First commit") {
 		t.Errorf("source %+v, texts %q", w.source, tt.Texts())
 	}
-	for _, label := range []string{"Changes", "Changed files"} {
+	for _, label := range []string{"Diff review", "Changed files"} {
 		if _, ok := tt.Find(label); ok {
 			t.Fatalf("loading kept %s from the previous source", label)
 		}

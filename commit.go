@@ -11,6 +11,9 @@ import (
 
 // toggleCommit shows the commit view, or the review again.
 func (w *window) toggleCommit() {
+	if !w.commitOpen && w.source.kind == sourceWorkingTree && w.source.ref != "" {
+		w.setSource(source{kind: sourceWorkingTree})
+	}
 	w.commitOpen = !w.commitOpen
 	if w.commitOpen {
 		w.commitDone = ""
@@ -69,7 +72,7 @@ func (w *window) commitView(c *ui.Context) {
 		dels += f.Deletions
 	}
 	subject := strings.TrimSpace(w.subject)
-	can := !w.commitBusy && w.commitDone == "" && chosen > 0 && subject != ""
+	can := !w.commitBusy && !w.changeBusy && !w.loading && w.commitDone == "" && chosen > 0 && subject != ""
 	submit := func() {
 		if can {
 			w.makeCommit()
@@ -240,6 +243,9 @@ func plural(n int, what string) string {
 
 // makeCommit commits the files chosen.
 func (w *window) makeCommit() {
+	if w.commitBusy || w.changeBusy || w.loading {
+		return
+	}
 	var paths []string
 	count := 0
 	for _, f := range w.commitFiles() {

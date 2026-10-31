@@ -14,6 +14,7 @@ import (
 // review state; only the native host and sidebar layout are shared.
 type repositoryWorkspace struct {
 	root, active *window
+	listViews    [3]*window // expanded History/PR list, independent of the review
 	entries      []*repositoryEntry
 	discovering  bool
 	discovered   bool
@@ -78,6 +79,16 @@ func (w *window) multipleRepositories() bool {
 	return w.workspace != nil && len(w.workspace.entries) > 1
 }
 
+func (w *window) listRepository(tab int) *window {
+	if ws := w.workspace; ws != nil {
+		if ws.listViews[tab] != nil {
+			return ws.listViews[tab]
+		}
+		return ws.active
+	}
+	return w
+}
+
 func (w *window) activateRepository() {
 	ws := w.workspace
 	if ws == nil {
@@ -85,6 +96,7 @@ func (w *window) activateRepository() {
 	}
 	previous := ws.active
 	if previous.tab != 0 {
+		ws.listViews[previous.tab] = w
 		for _, entry := range ws.entries {
 			if entry.view == w {
 				*entry.collapseState(previous.tab) = false
@@ -156,6 +168,11 @@ func (ws *repositoryWorkspace) discover() {
 					old.view.dispose()
 				}
 			}
+			for tab, view := range ws.listViews {
+				if !present[view] {
+					ws.listViews[tab] = nil
+				}
+			}
 			ws.entries = entries
 			if !present[ws.active] {
 				ws.root.activateRepository()
@@ -197,8 +214,7 @@ func (w *window) checkRepositoryChanges() {
 	}
 }
 
-// repositoryPanels adds compact repository headers to the existing file tree.
-// Committing continues to use the original footer and dedicated commit view.
+// repositoryPanels adds compact repository headers to each file tree.
 func (w *window) repositoryPanels(c *ui.Context) {
 	ws, t := w.workspace, c.Theme()
 	ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
@@ -212,6 +228,9 @@ func (w *window) repositoryPanels(c *ui.Context) {
 				if view == nil {
 					ui.Text(c, "Submodule not initialized").FontSize(11).TextColor(t.TextMuted).Padding(8, 14, 12)
 					return
+				}
+				if view.changeErr != "" {
+					ui.Text(c, view.changeErr).FontSize(11).TextColor(t.Danger).Padding(6, 14).MaxLines(3)
 				}
 				if view.loadErr != nil {
 					ui.Text(c, errorText(view.loadErr)).FontSize(11).TextColor(t.Danger).Padding(6, 14).MaxLines(3)
@@ -232,34 +251,28 @@ func (w *window) repositoryHeader(c *ui.Context, entry *repositoryEntry, tab int
 	ws, t := w.workspace, c.Theme()
 	pal, view := paletteFor(t), entry.view
 	state := entry.collapseState(tab)
-	collapsed := *state || (tab != 0 && view != ws.active)
+	collapsed := *state || (tab != 0 && view != w.listRepository(tab))
 	name := entry.name()
 	header := ui.Row(c).Height(28).Gap(5).Margin(2, 8).Padding(0, 8, 0, 6).Radius(6).MinWidth(0)
 	header.Children(func() {
-		toggle := ui.ButtonBase(c).Size(20, 26).Center().Label("Toggle repository " + name)
+		muted := styleSidebarRow(header, t, false, false)
+		toggle := ui.ButtonBase(c).Grow(1).MinWidth(0).Height(28).Gap(5).FocusRing(false).
+			Label("Repository " + name).Tooltip(entry.root)
 		toggle.Disabled(tab != 0 && view == nil).OnClick(func() {
 			*state = !collapsed
 			if tab != 0 && !*state {
-				view.activateRepository()
+				ws.listViews[tab] = view
+				view.focusHistory, view.focusPulls = tab == 1, tab == 2
 			}
 		})
-		selectRepo := ui.ButtonBase(c).Grow(1).MinWidth(0).Height(28).Gap(6).FocusRing(false).
-			Label("Repository " + name).Tooltip(entry.root).Disabled(view == nil)
-		muted := styleSidebarRow(header, t, view == ws.active, selectRepo.Focused())
 		toggle.Children(func() {
-			glyph := iconChevronDown
-			if collapsed {
-				glyph = iconChevronRight
-			}
-			ui.Icon(c, glyph).FontSize(14).TextColor(muted)
-		})
-		selectRepo.OnClick(view.activateRepository)
-		selectRepo.Children(func() {
-			ui.Icon(c, iconRepository).FontSize(15).Shrink(0)
-			ui.Text(c, name).FontSize(13).FontWeight(600).SingleLine().Grow(1).Shrink(1).MinWidth(0)
+			sidebarChevron(c, collapsed, muted)
+			ui.Text(c, name).FontSize(12).FontWeight(600).SingleLine().Grow(1).Shrink(1).MinWidth(0)
 		})
 		if view != nil {
-			if view.branch != "" {
+			if header.Hovered() || header.FocusWithin() {
+				view.repositoryActions(c, name)
+			} else if view.branch != "" {
 				ui.Row(c).Gap(3).Shrink(1).MaxWidth(100).MinWidth(0).TextColor(muted).Tooltip("Branch " + view.branch).Children(func() {
 					ui.Icon(c, iconBranch).FontSize(12).Shrink(0)
 					ui.Text(c, view.branch).FontSize(11).SingleLine().Shrink(1).MinWidth(0)
@@ -282,18 +295,33 @@ func (w *window) repositoryHeader(c *ui.Context, entry *repositoryEntry, tab int
 					count = fmt.Sprint(len(view.pulls))
 				}
 			}
-			ui.Text(c, count).FontSize(10).TextColor(muted).Padding(1, 5).Radius(8).Background(pal.pill)
+			ui.Text(c, count).Font(w.codeFont()).FontSize(10).TextColor(muted).Padding(1, 5).Radius(8).Background(pal.pill).Shrink(0)
 		}
 	})
 }
 
-// Only the active repository's history or pull requests expand, keeping the
-// lists bounded and preventing background pagination or requests.
+// Repository actions stay with their header, including when another repository
+// is selected or this one's list is collapsed.
+func (w *window) repositoryActions(c *ui.Context, name string) {
+	busy := w.loading || w.changeBusy || w.commitBusy
+	iconButton(c.Key("review"), iconFileDiff, "Review local changes in "+name).Size(22, 22).Disabled(busy).
+		OnClick(func() { w.reviewChanges("", "") })
+	if w.remoteURL != "" {
+		services, url := c.Services(), w.remoteURL
+		iconButton(c.Key("remote"), iconOpen, "Open remote repository for "+name).Size(22, 22).
+			Tooltip("Open remote repository\n" + url).OnClick(func() { services.OpenURL(url) })
+	}
+	iconButton(c.Key("refresh"), iconRefresh, "Refresh repository "+name).Size(22, 22).Disabled(busy || w.historyLoading).
+		OnClick(w.refreshRepository)
+}
+
+// Only one repository list expands at a time. Expanding it does not select a
+// review; selecting a commit or pull request does.
 func (w *window) repositoryLists(c *ui.Context, tab int) {
 	ws := w.workspace
 	ui.Column(c).Grow(1).MinHeight(0).Children(func() {
 		for _, entry := range ws.entries {
-			expanded := entry.view == ws.active && !*entry.collapseState(tab)
+			expanded := entry.view != nil && entry.view == w.listRepository(tab) && !*entry.collapseState(tab)
 			section := ui.Column(c.Key(entry.root)).FillWidth().MinHeight(0)
 			if expanded {
 				section.Grow(1)
@@ -320,6 +348,15 @@ func (w *window) repositoryLists(c *ui.Context, tab int) {
 }
 
 func (w *window) visibleFileCount() int {
+	if w.source.kind == sourceWorkingTree {
+		paths := map[string]bool{}
+		for _, n := range w.treeItems {
+			if n.file != nil {
+				paths[n.file.Path] = true
+			}
+		}
+		return len(paths)
+	}
 	count := 0
 	for i := range w.files {
 		if w.fileVisible(i) {

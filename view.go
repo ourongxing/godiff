@@ -58,6 +58,7 @@ func (w *window) view(c *ui.Context) {
 	w.sourceDialog(c)
 	w.shortcutsHelp(c)
 	w.reviewDialog(c)
+	w.discardChangesDialog(c)
 	if w.discarding != nil {
 		open := true
 		if choice := ui.AlertDialog(c, &open, "Discard this review comment?", "Its text will be lost.", "Cancel", "Discard"); choice == 1 {
@@ -84,18 +85,18 @@ var debugFrames = os.Getenv("GODIFF_DEBUG") != ""
 func (w *window) toolbar(c *ui.Context, pal *palette) {
 	t := c.Theme()
 	bar := c.TitleBar()
-	sidebarRight := w.sidebarShown && w.settings.SidebarPosition == "right"
+	sidebarRight := w.settings.SidebarPosition == "right"
 	left := float32(14)
 	if !w.sidebarShown || sidebarRight {
 		left = bar.Left + 8
 	}
 	right := float32(12)
-	if !sidebarRight {
+	if !w.sidebarShown || !sidebarRight {
 		right += bar.Right
 	}
 	ui.Row(c).Height(titleBarHeight).Padding(0, right, 0, left).Gap(8).Shrink(0).DragWindow().
 		BorderWidth(0, 0, 1, 0).BorderColor(pal.cardBorder).Background(pal.headerBg.Alpha(0.6)).Children(func() {
-		if !w.sidebarShown {
+		if !w.sidebarShown && !sidebarRight {
 			w.sidebarToggle(c)
 		}
 		// The repository: its name, and where it is.
@@ -113,6 +114,14 @@ func (w *window) toolbar(c *ui.Context, pal *palette) {
 			chip(c, pal, iconBranch, w.branch, t.TextMuted).Tooltip("Branch " + w.branch)
 		}
 		switch w.source.kind {
+		case sourceWorkingTree:
+			if w.source.ref != "" {
+				label := "Changes"
+				if w.source.ref == "staged" {
+					label = "Staged changes"
+				}
+				chip(c, pal, iconFileDiff, label, t.TextMuted)
+			}
 		case sourceCommit:
 			label := shortHash(w.source.ref)
 			chip(c, pal, iconCommit, label, pal.ref).Font(w.codeFont()).Tooltip(w.source.ref)
@@ -165,6 +174,9 @@ func (w *window) toolbar(c *ui.Context, pal *palette) {
 			}
 			w.groupControl(c, pal)
 			w.layoutControl(c, pal)
+		}
+		if !w.sidebarShown && sidebarRight {
+			w.sidebarToggle(c)
 		}
 	})
 }
@@ -288,6 +300,17 @@ func (w *window) mainArea(c *ui.Context, pal *palette) bool {
 	case len(w.files) == 0:
 		title, detail := "No local changes", abbreviateHome(w.repo.Root)
 		switch w.source.kind {
+		case sourceWorkingTree:
+			switch w.source.ref {
+			case "staged":
+				title = "No staged changes"
+			case "unstaged":
+				title = "No unstaged changes"
+			default:
+				if len(w.staged)+len(w.unstaged) > 0 {
+					title, detail = "No changes against HEAD", "Select staged or unstaged changes in the sidebar."
+				}
+			}
 		case sourceCommit:
 			title, detail = "No changes in commit", shortHash(w.source.ref)
 		case sourceBranch:

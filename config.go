@@ -45,7 +45,7 @@ func defaultSettings() Settings {
 		CodeFontSize:         13,
 		DiffStyle:            "split",
 		ReviewCommentsPrefix: "# Address these Review Comments",
-		SidebarPosition:      "left",
+		SidebarPosition:      "right",
 		Theme:                "system",
 	}
 }

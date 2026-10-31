@@ -87,3 +87,49 @@ func TestHistorySelectsOnPressFromOutsideSidebar(t *testing.T) {
 	}
 	tt.Release(r.X+r.W/2, r.Y+r.H/2)
 }
+
+func TestSidebarPositionAndResizing(t *testing.T) {
+	w, tt := newTestWindow(t, testRepo(t))
+	for _, side := range []string{"right", "left", "right"} {
+		s := w.settings
+		s.SidebarPosition = side
+		w.applySettings(s)
+		tt.Frame()
+		r, ok := tt.Find("Filter files")
+		if !ok || (side == "right") != (r.X > 640) {
+			t.Fatalf("sidebar did not move to %s: %+v", side, r)
+		}
+		before := w.sidebarWidth
+		x, dx := before, float32(40)
+		if side == "right" {
+			x, dx = 1280-before-1, -dx
+		}
+		tt.Press(x, 600)
+		tt.Move(x+dx, 600)
+		if w.sidebarWidth != before+40 {
+			t.Fatalf("%s sidebar grew to %v, want %v", side, w.sidebarWidth, before+40)
+		}
+		tt.Move(x, 600)
+		tt.Release(x, 600)
+		if w.sidebarWidth != before {
+			t.Fatalf("%s sidebar did not shrink back: %v", side, w.sidebarWidth)
+		}
+		if err := tt.Click("Hide sidebar (⌘⇧B)"); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		button, ok := tt.Find("Show sidebar (⌘⇧B)")
+		if !ok || (side == "right") != (button.X > 640) {
+			t.Fatalf("collapsed %s sidebar toggle is on the wrong side: %+v", side, button)
+		}
+		snapshot(t, tt, "sidebar-"+side+"-collapsed")
+		if err := tt.Click("Show sidebar (⌘⇧B)"); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		if !w.sidebarShown {
+			t.Fatalf("%s sidebar did not reopen", side)
+		}
+	}
+	snapshot(t, tt, "sidebar-right")
+}

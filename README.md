@@ -13,11 +13,19 @@ dark mode, menus and vibrancy.
 
 - **Review local changes**: staged, unstaged and untracked files against
   `HEAD`, in one scrolling surface of file cards with sticky headers.
+- **Staging**: collapsible Staged changes and Changes trees, with file
+  counts and per-file or bulk stage/unstage actions in each repository.
+  Open either group's diff with its review button, including partially staged
+  files. Discarding unstaged edits asks for confirmation and keeps the
+  index; directories and subrepository contents are left to their own tools.
 - **Subrepositories**: local submodules and nested Git repositories appear
   as compact, collapsible sections in Files, History and Pull Requests.
   Each repository keeps its own selected source, filters, comments, AI
-  review and commit draft. Switch from a repository header or the command
-  bar; refresh updates all repositories, including their history.
+  review and commit draft. Repository headers only expand or collapse their
+  groups. Select a file, commit or pull request, or use the command bar, to
+  switch repositories; refresh updates all repositories and their history.
+  Hover or focus a header to review its local changes, open its remote
+  branch, or refresh only that repository.
 - **Split and unified diffs** with syntax highlighting (Licht in light mode
   and VS Code's Dark Modern in dark mode), word-level change highlighting,
   and unchanged lines that expand 100 at a time or all at once. New and
@@ -28,8 +36,8 @@ dark mode, menus and vibrancy.
 - **Review comments**: click a line, or press <kbd>J</kbd>/<kbd>K</kbd> to
   choose a hunk and <kbd>Enter</kbd>, then copy every comment as Markdown,
   with the diff around it, for an agent or a colleague.
-- **Commit** the files you choose, with a subject and a summary, from the
-  sidebar's Commit button. Other staged work stays staged.
+- **Commit** the files you choose, with a subject and a summary, from
+  **File → Commit…** or the command bar. Other staged work stays staged.
 - **History**: browse commits and review any of them, or compare the work
   tree with a branch.
 - **Pull requests**, after [pulls.review](https://github.com/antfu/pulls.review):
@@ -58,7 +66,8 @@ dark mode, menus and vibrancy.
   status letters, and a banner when the work tree changes.
 - Sidebar navigation selects files, directories, commits and pull requests
   on pointer press, showing the new selection as the sidebar takes focus.
-  Directory disclosure and button actions activate on release.
+  Directory disclosure and button actions activate on release. The sidebar
+  starts on the right; **View → Sidebar Position** switches it to either side.
 - **File and folder icons** from [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme),
   with original colors, light-mode variants and specialized file-name associations.
 
@@ -120,7 +129,7 @@ with codiff's names, and apply to open windows as the file changes:
     "aiAgent": "",                 // claude, codex, opencode or pi; empty is the first installed
     "aiModel": "",                 // e.g. "sonnet" or "deepseek/deepseek-flash"; empty is the agent's default
     "reviewCommentsPrefix": "# Address these Review Comments",
-    "sidebarPosition": "left",     // or "right"
+    "sidebarPosition": "right",    // or "left"
     "showWhitespace": false,
     "theme": "system",             // or "light", "dark"
     "wordWrap": false
@@ -166,6 +175,4 @@ The code is in a few parts:
 ## Not (yet) carried over from codiff
 
 LLM walkthroughs, GitHub and GitLab pull request review, Markdown previews,
-editing files in place, definition lookup, `a..b` ranges, and separate cards
-for the staged and unstaged parts of a file (Godiff shows a file's changes
-against `HEAD` as one).
+editing files in place, definition lookup, and `a..b` ranges.

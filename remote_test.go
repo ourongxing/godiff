@@ -20,9 +20,8 @@ func TestRemoteRepositoryLinkFollowsSelection(t *testing.T) {
 	if err := tt.Click("Open remote repository"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click("Repository app"); err != nil {
-		t.Fatal(err)
-	}
+	child.activateRepository()
+	tt.Frame()
 	if err := tt.Click("Open remote repository"); err != nil {
 		t.Fatal(err)
 	}
