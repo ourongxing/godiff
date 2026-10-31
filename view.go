@@ -103,6 +103,12 @@ func (w *window) toolbar(c *ui.Context, pal *palette) {
 			ui.Text(c, filepath.Base(w.repo.Root)).FontSize(13).Bold().SingleLine()
 			ui.Text(c, filepath.Dir(abbreviateHome(w.repo.Root))).FontSize(11).TextColor(t.TextMuted).SingleLine()
 		})
+		if w.remoteURL != "" {
+			if iconButton(c, iconOpen, "Open remote repository").Size(24, 24).Shrink(0).
+				Tooltip("Open remote repository\n" + w.remoteURL).Clicked() {
+				c.OpenURL(w.remoteURL)
+			}
+		}
 		if w.branch != "" && w.source.kind != sourcePull {
 			chip(c, pal, iconBranch, w.branch, t.TextMuted).Tooltip("Branch " + w.branch)
 		}

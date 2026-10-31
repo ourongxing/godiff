@@ -59,6 +59,7 @@ type window struct {
 	settings  Settings
 
 	branch     string
+	remoteURL  string // the current repository's page, read off the UI thread
 	files      []*fileState
 	commit     *git.Commit // the commit reviewed, for sourceCommit
 	base       string      // the merge base, for sourceBranch and sourcePull
@@ -526,6 +527,7 @@ func (w *window) load() {
 			err    error
 			wg     sync.WaitGroup
 		)
+		remoteURL := w.repo.WebURL()
 		if needBranch {
 			wg.Add(1)
 			go func() {
@@ -592,6 +594,7 @@ func (w *window) load() {
 			w.loadErr = err
 			w.loadStatus = ""
 			w.branch = branch
+			w.remoteURL = remoteURL
 			if err == nil {
 				w.commit = commit
 			}
