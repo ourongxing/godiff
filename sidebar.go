@@ -289,7 +289,7 @@ func (w *window) sidebar(c *ui.Context) {
 				ui.Spacer(c)
 			}
 		})
-		if w.tab == 2 && !w.gh.ok() {
+		if w.tab == 2 && !w.hasPullRequests() {
 			w.tab = 0
 		}
 		ui.Column(c).Padding(2, 10, 8).Children(func() {
@@ -325,10 +325,14 @@ func (w *window) sidebar(c *ui.Context) {
 			} else {
 				w.fileTree(c)
 			}
-		case 1:
-			w.historyView(c)
 		default:
-			w.pullsView(c)
+			if w.multipleRepositories() {
+				w.repositoryLists(c, w.tab)
+			} else if w.tab == 1 {
+				w.historyView(c)
+			} else {
+				w.pullsView(c)
+			}
 		}
 		w.sidebarFooter(c, pal)
 	})
@@ -350,8 +354,7 @@ func (w *window) sidebarBg(t *ui.Theme) ui.Color {
 // their controls on the traffic lights of a window with an inset title bar.
 const titleBarHeight = 52
 
-// tabControl switches the sidebar between the files, the history and the
-// pull requests, and reports a switch.
+// tabControl switches the sidebar between files and history, and reports a switch.
 func (w *window) tabControl(c *ui.Context) bool {
 	t := c.Theme()
 	pal := paletteFor(t)
@@ -360,10 +363,8 @@ func (w *window) tabControl(c *ui.Context) bool {
 		name string
 	}
 	items := []item{{iconTree, "Files (⌘1)"}, {iconHistory, "History (⌘2)"}}
-	if w.gh.ok() {
-		items = append(items, item{iconPull, "Pull Requests (⌘3)"})
-	}
-	seg := ui.SegmentedBase(c, &w.tab, len(items))
+	// Keep PR's index valid for menu and command actions while its tab is hidden.
+	seg := ui.SegmentedBase(c, &w.tab, 3)
 	seg.Track.Padding(2).Gap(2).Radius(8).Background(ui.RGBA(127, 127, 127, 0.12)).Label("Sidebar").Children(func() {
 		for i, it := range items {
 			s := seg.Segment(i).Size(30, 24).Radius(6).Center().Label(it.name).Tooltip(it.name).TextColor(t.TextMuted)

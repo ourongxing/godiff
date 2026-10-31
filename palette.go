@@ -11,6 +11,7 @@ import (
 
 // command is an action of the command bar.
 type command struct {
+	id    string
 	title string
 	hint  string // a description, or the shortcut
 	keys  string
@@ -42,7 +43,7 @@ func (w *window) commands() []command {
 	if w.settings.ShowWhitespace {
 		whitespace = "Hide Whitespace Changes"
 	}
-	return []command{
+	commands := []command{
 		{title: "Focus File Filter", keys: "⌘P", run: w.focusFilter},
 		{title: "Find in Diffs", keys: "⌘F", run: func() { w.finding = true }},
 		{title: "Open Commit", hint: "Review a commit", run: func() { w.openDialog(dialogCommit) }},
@@ -96,6 +97,15 @@ func (w *window) commands() []command {
 		{title: "Refresh Changes", keys: "⌘R", run: w.refresh},
 		{title: "Keyboard Shortcuts", keys: "⇧?", run: func() { w.help = true }},
 	}
+	if w.multipleRepositories() {
+		for _, entry := range w.workspace.entries {
+			if entry.view != nil {
+				commands = append(commands, command{id: "repository:" + entry.root,
+					title: "Switch Repository: " + entry.name(), hint: entry.root, run: entry.view.activateRepository})
+			}
+		}
+	}
+	return commands
 }
 
 func toggleLayout() {
@@ -206,7 +216,12 @@ func (w *window) palette(c *ui.Context) {
 				run(w.paletteRow)
 			}
 		})
-		w.paletteList.Key = func(i int) any { return cmds[i].title }
+		w.paletteList.Key = func(i int) any {
+			if cmds[i].id != "" {
+				return cmds[i].id
+			}
+			return cmds[i].title
+		}
 		ui.List(c, &w.paletteList, len(cmds), func(i int) {
 			cmd := cmds[i]
 			item := ui.Row(c).MinHeight(34).Padding(6, 10).Gap(8).Radius(8).Cursor(ui.CursorPointer)
@@ -407,11 +422,12 @@ func (w *window) shortcutsHelp(c *ui.Context) {
 
 // showPulls shows the pull requests in the sidebar.
 func (w *window) showPulls() {
-	if !w.gh.ok() {
+	if !w.hasPullRequests() {
 		w.openDialog(dialogPull)
 		return
 	}
 	w.tab, w.sidebarShown = 2, true
+	w.focusPulls = true
 }
 
 // openSubmit opens the dialog submitting the review of the pull request

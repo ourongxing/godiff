@@ -453,7 +453,7 @@ func TestAIModelMenu(t *testing.T) {
 	w, tt := newTestWindow(t, testRepo(t))
 	// The models OpenCode lists, as if it had listed them.
 	modelsFound.Lock()
-	modelsFound.byAgent = map[string]*agentModels{"opencode": {done: true, fetchedAt: time.Now(), def: "deepseek/deepseek-flash", models: []agent.Model{
+	modelsFound.byScope = map[modelScope]*agentModels{{"opencode", w.repo.Root}: {done: true, fetchedAt: time.Now(), def: "deepseek/deepseek-flash", models: []agent.Model{
 		{ID: "deepseek/deepseek-flash", Label: "deepseek-flash", Provider: "deepseek"},
 		{ID: "vercel/anthropic/claude-sonnet-4.6", Label: "anthropic/claude-sonnet-4.6", Provider: "vercel"},
 		{ID: "vercel/bfl/flux-3-image", Label: "bfl/flux-3-image", Provider: "vercel"},
@@ -461,7 +461,7 @@ func TestAIModelMenu(t *testing.T) {
 	modelsFound.Unlock()
 	t.Cleanup(func() {
 		modelsFound.Lock()
-		modelsFound.byAgent = nil
+		modelsFound.byScope = nil
 		modelsFound.Unlock()
 	})
 	withSettings(t, func(s *Settings) { s.AIAgent = "opencode" })

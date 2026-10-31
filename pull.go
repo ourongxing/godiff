@@ -12,7 +12,6 @@ import (
 	"github.com/egoist/godiff/internal/diff"
 	"github.com/egoist/godiff/internal/git"
 	"github.com/egoist/godiff/internal/github"
-	"github.com/egoist/mygo"
 )
 
 // ghRemote is the remote of a repository on GitHub.
@@ -191,7 +190,7 @@ func (w *window) fetchPull(gen int, src source, remote string, opts git.Options)
 			}
 		})
 	}
-	ctx := context.Background()
+	ctx := w.ctx
 	status(fmt.Sprintf("Reading #%d from GitHub…", n))
 	meta, err := ghClient().Pull(ctx, repo, n)
 	if err != nil {
@@ -257,7 +256,7 @@ func (w *window) loadReviews() {
 	needViewer := p.viewer == "" && p.readOnly == ""
 	w.background(func() {
 		client := ghClient()
-		ctx := context.Background()
+		ctx := w.ctx
 		reviews, err := client.Reviews(ctx, p.repo, p.number)
 		viewer, readOnly := "", ""
 		if needViewer {
@@ -301,7 +300,7 @@ func (w *window) write(p *pullState, fn func(ctx context.Context, c *github.Clie
 	p.busy++
 	p.writeErr = ""
 	w.background(func() {
-		err := fn(context.Background(), ghClient())
+		err := fn(w.ctx, ghClient())
 		w.update(func() {
 			p.busy--
 			if err != nil {
@@ -361,7 +360,7 @@ func (w *window) postComment(cm *comment, review bool) {
 func (w *window) checkPull(src source) {
 	var p *pullState
 	var due bool
-	mygo.RunOnMain(func() {
+	w.onMain(func() {
 		p = w.pr
 		if p == nil || w.source != src || p.meta == nil {
 			return
@@ -379,7 +378,7 @@ func (w *window) checkPull(src source) {
 	if !due {
 		return
 	}
-	meta, err := ghClient().Pull(context.Background(), p.repo, p.number)
+	meta, err := ghClient().Pull(w.ctx, p.repo, p.number)
 	if err != nil {
 		return
 	}
@@ -406,7 +405,7 @@ func (w *window) loadPulls() {
 	w.pullsLoading = true
 	repo := w.gh.repo
 	w.background(func() {
-		pulls, err := ghClient().OpenPulls(context.Background(), repo)
+		pulls, err := ghClient().OpenPulls(w.ctx, repo)
 		w.update(func() {
 			w.pullsLoading = false
 			w.pullsLoaded = true

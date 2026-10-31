@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -52,6 +53,8 @@ type session struct {
 // window is a window reviewing a repository.
 type window struct {
 	win       *mygo.Window
+	ctx       context.Context
+	cancel    context.CancelFunc
 	repo      *git.Repo
 	workspace *repositoryWorkspace
 	launch    source // what the window was opened on
@@ -77,7 +80,7 @@ type window struct {
 	// The sidebar.
 	sidebarShown bool
 	sidebarWidth float32
-	tab          int // 0 files, 1 history
+	tab          int // 0 files, 1 history, 2 pull requests
 	filter       string
 	filterFocus  bool
 	treeList     ui.ListState
@@ -88,6 +91,7 @@ type window struct {
 	history      []git.Commit
 	historyLimit int
 	historyMore  bool
+	historyGen   int
 	historyList  ui.ListState
 	commitTimes  map[string]commitTime
 	// historyFilter filters the History tab, apart from the files'.
@@ -112,6 +116,7 @@ type window struct {
 	focusList        bool
 	focusedOnce      bool
 	focusHistory     bool
+	focusPulls       bool
 	switchedAt       time.Time // when the source last changed, for GODIFF_DEBUG
 	debugPressed     bool
 	// hold keeps the background work of tests in held, to run frames
@@ -269,10 +274,9 @@ func openWindow(dir string, src source) error {
 	})
 	w.win.OnClosed(func() {
 		close(stop)
-		w.workspace.closed.Store(true)
 		for _, entry := range w.workspace.entries {
 			if entry.view != nil {
-				entry.view.genA.Add(1)
+				entry.view.dispose()
 			}
 		}
 		offSettings()
@@ -300,7 +304,10 @@ func openWindow(dir string, src source) error {
 // repository.
 func newWindow(repo *git.Repo, src source) *window {
 	width, shown := state.layout()
+	ctx, cancel := context.WithCancel(context.Background())
 	w := &window{
+		ctx:          ctx,
+		cancel:       cancel,
 		repo:         repo,
 		launch:       src,
 		source:       src,
@@ -367,35 +374,64 @@ func (w *window) applySettings(s Settings) {
 // background runs fn on a goroutine of its own, or at once in tests,
 // which have no window.
 func (w *window) background(fn func()) {
+	work := func() {
+		if w.ctx.Err() == nil {
+			fn()
+		}
+	}
 	if w.win == nil {
 		if w.hold {
 			// Tests run frames while the work waits.
-			w.held = append(w.held, fn)
+			w.held = append(w.held, work)
 			return
 		}
-		fn()
+		work()
 		return
 	}
-	go fn()
+	go work()
+}
+
+// dispose ends jobs owned by a closed window or a removed repository.
+func (w *window) dispose() {
+	w.cancel()
+	w.genA.Add(1)
+}
+
+// onMain reads UI state synchronously, including in headless tests.
+func (w *window) onMain(fn func()) {
+	read := func() {
+		if w.ctx.Err() == nil {
+			fn()
+		}
+	}
+	if w.win == nil {
+		read()
+	} else {
+		mygo.RunOnMain(read)
+	}
 }
 
 // update runs fn on the main thread, then draws a frame.
 func (w *window) update(fn func()) {
-	if w.win == nil {
-		fn()
-		return
-	}
-	if debugFrames {
-		inner := fn
-		fn = func() {
-			start := time.Now()
-			inner()
-			if d := time.Since(start); d > 2*time.Millisecond {
-				log.Printf("slow update: %v", d)
-			}
+	apply := func() {
+		if w.ctx.Err() != nil {
+			return
 		}
+		if debugFrames {
+			start := time.Now()
+			defer func() {
+				if d := time.Since(start); d > 2*time.Millisecond {
+					log.Printf("slow update: %v", d)
+				}
+			}()
+		}
+		fn()
 	}
-	w.win.Update(fn)
+	if w.win == nil {
+		apply()
+	} else {
+		w.win.Update(apply)
+	}
 }
 
 func (w *window) invalidate() {
@@ -501,14 +537,12 @@ func (w *window) load() {
 	w.loadErr = nil
 	w.changed = false
 	w.genA.Store(int64(gen))
-	// What is known already needs no git: the commit, from the history, and
-	// the branch, which showing a commit does not change.
+	// A commit read from history needs no second metadata lookup.
 	known := w.commit
 	if known != nil && known.Hash != src.ref {
 		known = nil
 	}
-	branch := w.branch
-	needBranch := src.kind != sourceCommit || branch == ""
+	var branch string
 	remote := w.pullRemote(src)
 	w.loadStatus = ""
 	// Files unchanged since the last load keep their contents.
@@ -527,13 +561,11 @@ func (w *window) load() {
 			err    error
 			wg     sync.WaitGroup
 		)
-		if needBranch {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				branch = w.repo.Branch()
-			}()
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			branch = w.repo.Branch()
+		}()
 		sig := ""
 		switch src.kind {
 		case sourceWorkingTree:
@@ -958,6 +990,8 @@ func (w *window) loadUser() {
 // loadHistory reads the commits of the History tab.
 func (w *window) loadHistory() {
 	limit := w.historyLimit
+	w.historyGen++
+	gen := w.historyGen
 	w.historyLoading = true
 	w.background(func() {
 		commits, err := w.repo.Log(0, limit)
@@ -965,6 +999,9 @@ func (w *window) loadHistory() {
 			commits = nil
 		}
 		w.update(func() {
+			if gen != w.historyGen {
+				return
+			}
 			w.history = commits
 			w.historyMore = len(commits) >= limit
 			w.historyLoading = false
@@ -994,9 +1031,35 @@ func (w *window) watch(stop chan struct{}) {
 // checkChanges compares the work tree with what the window shows.
 func (w *window) checkChanges() {
 	var src source
-	var sig string
-	var busy bool
-	mygo.RunOnMain(func() { src, sig, busy = w.source, w.signature, w.loading || w.changed || w.commitBusy })
+	var sig, head, branch string
+	var historyGen int
+	busy, historyBusy := true, true
+	w.onMain(func() {
+		src, sig, branch = w.source, w.signature, w.branch
+		historyGen = w.historyGen
+		if len(w.history) > 0 {
+			head = w.history[0].Hash
+		}
+		busy, historyBusy = w.loading || w.changed || w.commitBusy, w.historyLoading
+	})
+	if !historyBusy {
+		now, _ := w.repo.Resolve("HEAD")
+		if now != head {
+			w.update(func() {
+				if !w.historyLoading && w.historyGen == historyGen {
+					w.loadHistory()
+				}
+			})
+		}
+		if current := w.repo.Branch(); current != branch {
+			remoteURL := w.repo.WebURL(current)
+			w.update(func() {
+				if w.branch == branch {
+					w.branch, w.remoteURL = current, remoteURL
+				}
+			})
+		}
+	}
 	if src.kind == sourcePull && !busy {
 		w.checkPull(src)
 		return
@@ -1005,12 +1068,11 @@ func (w *window) checkChanges() {
 		return
 	}
 	if now := w.repo.StatusSignature(); now != sig {
-		w.win.Update(func() {
+		w.update(func() {
 			if w.source == src && !w.loading {
 				w.changed = true
 				if w.multipleRepositories() && src.kind == sourceWorkingTree && !w.commitBusy {
 					w.load()
-					w.loadHistory()
 				}
 			}
 		})
@@ -1022,6 +1084,19 @@ func (w *window) checkChanges() {
 func (w *window) refresh() {
 	if w.workspace != nil {
 		w.workspace.discover()
+		for _, entry := range w.workspace.entries {
+			if entry.view != nil {
+				entry.view.refreshRepository()
+			}
+		}
+		return
+	}
+	w.refreshRepository()
+}
+
+func (w *window) refreshRepository() {
+	if w.commitBusy {
+		return
 	}
 	w.load()
 	w.loadHistory()

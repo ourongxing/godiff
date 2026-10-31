@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/egoist/godiff/internal/git"
-	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -21,14 +19,47 @@ type repositoryWorkspace struct {
 	discovered   bool
 	err          string
 	nextScan     time.Time
-	closed       atomic.Bool
 }
 
 type repositoryEntry struct {
-	path      string
-	root      string
-	view      *window // nil for an uninitialized submodule
-	collapsed bool
+	path             string
+	root             string
+	view             *window // nil for an uninitialized submodule
+	collapsed        bool
+	historyCollapsed bool
+	pullsCollapsed   bool
+}
+
+func (e *repositoryEntry) name() string {
+	if e.path != "" {
+		return e.path
+	}
+	return filepath.Base(e.root)
+}
+
+func (e *repositoryEntry) collapseState(tab int) *bool {
+	switch tab {
+	case 1:
+		return &e.historyCollapsed
+	case 2:
+		return &e.pullsCollapsed
+	default:
+		return &e.collapsed
+	}
+}
+
+func (w *window) hasPullRequests() bool {
+	if w.gh.ok() {
+		return true
+	}
+	if w.workspace != nil {
+		for _, entry := range w.workspace.entries {
+			if entry.view != nil && entry.view.gh.ok() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (w *window) initRepositories() {
@@ -49,10 +80,22 @@ func (w *window) multipleRepositories() bool {
 
 func (w *window) activateRepository() {
 	ws := w.workspace
-	if ws == nil || ws.active == w {
+	if ws == nil {
 		return
 	}
 	previous := ws.active
+	if previous.tab != 0 {
+		for _, entry := range ws.entries {
+			if entry.view == w {
+				*entry.collapseState(previous.tab) = false
+				break
+			}
+		}
+	}
+	w.focusHistory, w.focusPulls = previous.tab == 1, previous.tab == 2
+	if previous == w {
+		return
+	}
 	w.sidebarWidth, w.sidebarShown = previous.sidebarWidth, previous.sidebarShown
 	w.tab = previous.tab
 	ws.active = w
@@ -68,7 +111,7 @@ func (w *window) activateRepository() {
 // discover runs Git and creates new repository states off the UI thread.
 // Existing states survive rediscovery, including drafts and in-flight jobs.
 func (ws *repositoryWorkspace) discover() {
-	if ws.discovering || ws.closed.Load() {
+	if ws.discovering || ws.root.ctx.Err() != nil {
 		return
 	}
 	ws.discovering = true
@@ -96,21 +139,25 @@ func (ws *repositoryWorkspace) discover() {
 		}
 		ws.root.update(func() {
 			ws.discovering = false
-			if ws.closed.Load() {
-				return
-			}
 			if err != nil {
 				ws.err = errorText(err)
 				return
 			}
 			first := !ws.discovered
 			ws.discovered, ws.err = true, ""
-			ws.entries = entries
-			present := false
+			present := map[*window]bool{}
 			for _, entry := range entries {
-				present = present || entry.view == ws.active
+				if entry.view != nil {
+					present[entry.view] = true
+				}
 			}
-			if !present {
+			for _, old := range ws.entries {
+				if old.view != nil && !present[old.view] {
+					old.view.dispose()
+				}
+			}
+			ws.entries = entries
+			if !present[ws.active] {
 				ws.root.activateRepository()
 			}
 			if first && len(entries) == 1 && ws.root.loadedOnce && len(ws.root.files) == 0 && ws.root.source.kind == sourceWorkingTree {
@@ -119,6 +166,7 @@ func (ws *repositoryWorkspace) discover() {
 			for _, view := range fresh {
 				view.workspace, view.win = ws, ws.root.win
 				view.settings = ws.root.settings
+				view.filter = ws.active.filter
 				view.load()
 				view.loadHistory()
 				view.loadUser()
@@ -129,15 +177,12 @@ func (ws *repositoryWorkspace) discover() {
 
 func (w *window) checkRepositoryChanges() {
 	var views []*window
-	mygo.RunOnMain(func() {
+	w.onMain(func() {
 		if w.workspace == nil {
 			views = []*window{w}
 			return
 		}
 		ws := w.workspace
-		if ws.closed.Load() {
-			return
-		}
 		for _, entry := range ws.entries {
 			if entry.view != nil {
 				views = append(views, entry.view)
@@ -156,44 +201,11 @@ func (w *window) checkRepositoryChanges() {
 // Committing continues to use the original footer and dedicated commit view.
 func (w *window) repositoryPanels(c *ui.Context) {
 	ws, t := w.workspace, c.Theme()
-	pal := paletteFor(t)
 	ui.Scroll(c).Grow(1).MinHeight(0).Children(func() {
 		for _, entry := range ws.entries {
 			ui.Column(c.Key(entry.root)).FillWidth().Children(func() {
 				view := entry.view
-				name := filepath.Base(entry.root)
-				if entry.path != "" {
-					name = entry.path
-				}
-				header := ui.Row(c).Height(28).Gap(5).Margin(2, 8).Padding(0, 8, 0, 6).Radius(6).MinWidth(0)
-				header.Children(func() {
-					toggle := ui.ButtonBase(c).Size(20, 26).Center().Label("Toggle repository " + name)
-					toggle.OnClick(func() { entry.collapsed = !entry.collapsed })
-					selectRepo := ui.ButtonBase(c).Grow(1).MinWidth(0).Height(28).Gap(6).FocusRing(false).
-						Label("Repository " + name).Tooltip(entry.root).Disabled(view == nil)
-					muted := styleSidebarRow(header, t, view == ws.active, selectRepo.Focused())
-					toggle.Children(func() {
-						glyph := iconChevronDown
-						if entry.collapsed {
-							glyph = iconChevronRight
-						}
-						ui.Icon(c, glyph).FontSize(14).TextColor(muted)
-					})
-					selectRepo.OnClick(func() { view.activateRepository() })
-					selectRepo.Children(func() {
-						ui.Icon(c, iconRepository).FontSize(15).Shrink(0)
-						ui.Text(c, name).FontSize(13).FontWeight(600).SingleLine().Grow(1).Shrink(1).MinWidth(0)
-					})
-					if view != nil {
-						if view.branch != "" {
-							ui.Row(c).Gap(3).Shrink(1).MaxWidth(100).MinWidth(0).TextColor(muted).Tooltip("Branch " + view.branch).Children(func() {
-								ui.Icon(c, iconBranch).FontSize(12).Shrink(0)
-								ui.Text(c, view.branch).FontSize(11).SingleLine().Shrink(1).MinWidth(0)
-							})
-						}
-						ui.Text(c, fmt.Sprint(view.visibleFileCount())).FontSize(10).TextColor(muted).Padding(1, 5).Radius(8).Background(pal.pill)
-					}
-				})
+				w.repositoryHeader(c, entry, 0)
 				if entry.collapsed {
 					return
 				}
@@ -210,6 +222,98 @@ func (w *window) repositoryPanels(c *ui.Context) {
 					ui.Column(c).Height(height).Children(func() { view.fileTree(c) })
 				}
 				ui.Box(c).Height(8)
+			})
+		}
+	})
+}
+
+// repositoryHeader is shared by Files, History and Pull Requests.
+func (w *window) repositoryHeader(c *ui.Context, entry *repositoryEntry, tab int) {
+	ws, t := w.workspace, c.Theme()
+	pal, view := paletteFor(t), entry.view
+	state := entry.collapseState(tab)
+	collapsed := *state || (tab != 0 && view != ws.active)
+	name := entry.name()
+	header := ui.Row(c).Height(28).Gap(5).Margin(2, 8).Padding(0, 8, 0, 6).Radius(6).MinWidth(0)
+	header.Children(func() {
+		toggle := ui.ButtonBase(c).Size(20, 26).Center().Label("Toggle repository " + name)
+		toggle.Disabled(tab != 0 && view == nil).OnClick(func() {
+			*state = !collapsed
+			if tab != 0 && !*state {
+				view.activateRepository()
+			}
+		})
+		selectRepo := ui.ButtonBase(c).Grow(1).MinWidth(0).Height(28).Gap(6).FocusRing(false).
+			Label("Repository " + name).Tooltip(entry.root).Disabled(view == nil)
+		muted := styleSidebarRow(header, t, view == ws.active, selectRepo.Focused())
+		toggle.Children(func() {
+			glyph := iconChevronDown
+			if collapsed {
+				glyph = iconChevronRight
+			}
+			ui.Icon(c, glyph).FontSize(14).TextColor(muted)
+		})
+		selectRepo.OnClick(view.activateRepository)
+		selectRepo.Children(func() {
+			ui.Icon(c, iconRepository).FontSize(15).Shrink(0)
+			ui.Text(c, name).FontSize(13).FontWeight(600).SingleLine().Grow(1).Shrink(1).MinWidth(0)
+		})
+		if view != nil {
+			if view.branch != "" {
+				ui.Row(c).Gap(3).Shrink(1).MaxWidth(100).MinWidth(0).TextColor(muted).Tooltip("Branch " + view.branch).Children(func() {
+					ui.Icon(c, iconBranch).FontSize(12).Shrink(0)
+					ui.Text(c, view.branch).FontSize(11).SingleLine().Shrink(1).MinWidth(0)
+				})
+			}
+			var count string
+			switch tab {
+			case 0:
+				count = fmt.Sprint(view.visibleFileCount())
+			case 1:
+				count = fmt.Sprint(len(view.history))
+				if view.historyMore {
+					count += "+"
+				}
+			case 2:
+				count = "…"
+				if !view.gh.ok() {
+					count = "—"
+				} else if view.pullsLoaded {
+					count = fmt.Sprint(len(view.pulls))
+				}
+			}
+			ui.Text(c, count).FontSize(10).TextColor(muted).Padding(1, 5).Radius(8).Background(pal.pill)
+		}
+	})
+}
+
+// Only the active repository's history or pull requests expand, keeping the
+// lists bounded and preventing background pagination or requests.
+func (w *window) repositoryLists(c *ui.Context, tab int) {
+	ws := w.workspace
+	ui.Column(c).Grow(1).MinHeight(0).Children(func() {
+		for _, entry := range ws.entries {
+			expanded := entry.view == ws.active && !*entry.collapseState(tab)
+			section := ui.Column(c.Key(entry.root)).FillWidth().MinHeight(0)
+			if expanded {
+				section.Grow(1)
+			} else {
+				section.Shrink(0)
+			}
+			section.Children(func() {
+				w.repositoryHeader(c, entry, tab)
+				if expanded {
+					switch {
+					case tab == 1:
+						entry.view.historyView(c)
+					case entry.view.gh.ok():
+						entry.view.pullsView(c)
+					default:
+						ui.Column(c).Grow(1).Center().Padding(16).Children(func() {
+							ui.Text(c, "This repository has no GitHub remote.").FontSize(12).TextColor(c.Theme().TextMuted).TextAlign(ui.Center)
+						})
+					}
+				}
 			})
 		}
 	})

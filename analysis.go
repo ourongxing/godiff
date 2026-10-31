@@ -177,7 +177,7 @@ func (w *window) runAnalysis() {
 	}
 	name := w.settings.AIAgent
 	path := analysisPath(w.repo.Root, src)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(w.ctx)
 	st.running, st.err, st.progress, st.started, st.cancel, st.folded, st.offered = true, "", "Starting…", time.Now(), cancel, false, false
 	w.rowsDirty = true
 	w.list.ScrollTo(0, ui.Start)
@@ -606,8 +606,11 @@ type agentModels struct {
 
 var modelsFound struct {
 	sync.Mutex
-	byAgent map[string]*agentModels
+	byScope map[modelScope]*agentModels
 }
+
+// Agents can configure providers and models per working directory.
+type modelScope struct{ agent, dir string }
 
 // modelsOf returns the models of an agent as last listed: they are
 // listed off the main thread, when first asked for and again once a few
@@ -615,13 +618,14 @@ var modelsFound struct {
 func modelsOf(a agent.Agent, dir string) agentModels {
 	modelsFound.Lock()
 	defer modelsFound.Unlock()
-	if modelsFound.byAgent == nil {
-		modelsFound.byAgent = map[string]*agentModels{}
+	if modelsFound.byScope == nil {
+		modelsFound.byScope = map[modelScope]*agentModels{}
 	}
-	list := modelsFound.byAgent[a.Name]
+	key := modelScope{a.Name, dir}
+	list := modelsFound.byScope[key]
 	if list == nil {
 		list = &agentModels{}
-		modelsFound.byAgent[a.Name] = list
+		modelsFound.byScope[key] = list
 	}
 	if detectAgents && !list.fetching && (!list.done || time.Since(list.fetchedAt) > 5*time.Minute) {
 		list.fetching = true

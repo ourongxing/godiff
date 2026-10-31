@@ -14,9 +14,10 @@ dark mode, menus and vibrancy.
 - **Review local changes**: staged, unstaged and untracked files against
   `HEAD`, in one scrolling surface of file cards with sticky headers.
 - **Subrepositories**: local submodules and nested Git repositories appear
-  as compact, collapsible sections in the file tree. Choose a repository
-  or one of its files to review its changes, history and comments; commit
-  drafts and file selections stay with their own repository.
+  as compact, collapsible sections in Files, History and Pull Requests.
+  Each repository keeps its own selected source, filters, comments, AI
+  review and commit draft. Switch from a repository header or the command
+  bar; refresh updates all repositories, including their history.
 - **Split and unified diffs** with syntax highlighting (Licht in light mode
   and VS Code's Dark Modern in dark mode), word-level change highlighting,
   and unchanged lines that expand 100 at a time or all at once. New and
